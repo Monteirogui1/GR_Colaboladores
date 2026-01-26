@@ -1,0 +1,35 @@
+{% extends 'layouts/base.html' %}
+
+{% block title %}{% if object %}Editar Grupo{% else %}Novo Grupo{% endif %} - TI Manager{% endblock %}
+
+{% block conteudo %}
+<div class="content">
+    <div class="page-header">
+        <h1>{% if object %}Editar Grupo{% else %}Novo Grupo{% endif %}</h1>
+        <a href="{% url 'inventario:group_list' %}" class="btn btn-secondary">Voltar</a>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-grid">
+            <div class="form-group">
+                {{ form.name.label_tag }}
+                {{ form.name }}
+                {% if form.name.errors %}
+                    <div class="text-danger">{{ form.name.errors }}</div>
+                {% endif %}
+            </div>
+            <div class="form-group full-width">
+                {{ form.description.label_tag }}
+                {{ form.description }}
+                {% if form.description.errors %}
+                    <div class="text-danger">{{ form.description.errors }}</div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Salvar</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

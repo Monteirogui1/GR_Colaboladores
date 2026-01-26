@@ -20,30 +20,35 @@ document.addEventListener('DOMContentLoaded', () => {
 //     alert('Você saiu do sistema!');
 // });
 
-// Funcionalidade de exclusão (exemplo genérico, precisa de integração com backend)
+// Tratamento de exclusão via AJAX
 document.querySelectorAll('.btn-delete').forEach(button => {
-    button.addEventListener('click', () => {
-        const id = button.getAttribute('data-id');
+    button.addEventListener('click', function(e) {
+        e.preventDefault();
+        const id = this.getAttribute('data-id');
+
         if (confirm('Tem certeza que deseja excluir este item?')) {
-            // Aqui você pode fazer uma requisição AJAX para excluir o item
-            alert(`Item com ID ${id} seria excluído (funcionalidade de exemplo).`);
-            // Exemplo de requisição (descomente e ajuste conforme necessário):
-            /*
-            fetch(`/delete-url/${id}/`, {
+            const currentUrl = window.location.pathname;
+            const deleteUrl = currentUrl.replace(/\/$/, '') + '/' + id + '/delete/';
+
+            fetch(deleteUrl, {
                 method: 'DELETE',
                 headers: {
                     'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
                 }
-            }).then(response => {
-                if (response.ok) {
-                    button.closest('tr').remove();
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    window.location.href = data.redirect;
                 }
+            })
+            .catch(error => {
+                console.error('Erro:', error);
+                alert('Erro ao excluir o item');
             });
-            */
         }
     });
 });
-
 // Função para toggle de senha na página de login
 function togglePassword() {
     const passwordField = document.getElementById('password');

@@ -1,0 +1,52 @@
+{% extends 'layouts/base.html' %}
+
+{% block title %}{% if object %}Editar Bloqueio{% else %}Novo Bloqueio{% endif %} - TI Manager{% endblock %}
+
+{% block conteudo %}
+<div class="content">
+    <div class="page-header">
+        <h1>{% if object %}Editar Bloqueio{% else %}Novo Bloqueio{% endif %}</h1>
+        <a href="{% url 'inventario:blockedsite_list' %}" class="btn btn-secondary">Voltar</a>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+            <div class="alert alert-danger">
+                {{ form.non_field_errors }}
+            </div>
+        {% endif %}
+
+        <div class="form-grid">
+            <div class="form-group full-width">
+                {{ form.url.label_tag }}
+                {{ form.url }}
+                <small class="form-text">Ex: facebook.com, youtube.com</small>
+                {% if form.url.errors %}
+                    <div class="text-danger">{{ form.url.errors }}</div>
+                {% endif %}
+            </div>
+            <div class="form-group">
+                {{ form.machine.label_tag }}
+                {{ form.machine }}
+                <small class="form-text">Selecione uma máquina específica</small>
+                {% if form.machine.errors %}
+                    <div class="text-danger">{{ form.machine.errors }}</div>
+                {% endif %}
+            </div>
+            <div class="form-group">
+                {{ form.group.label_tag }}
+                {{ form.group }}
+                <small class="form-text">OU selecione um grupo</small>
+                {% if form.group.errors %}
+                    <div class="text-danger">{{ form.group.errors }}</div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Salvar</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

@@ -11,77 +11,84 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
-    <div class="container">
-        <aside class="sidebar" role="navigation">
-            <div class="logo">
-                <h2>ERP <span>Estoque</span></h2>
-            </div>
-            <nav>
-                <ul>
-                    <li><a href="{% url 'home:dashboard' %}"><span class="icon"><i class="bi bi-speedometer2"></i></span> Painel</a></li>
-                    
-                    <li><a href="{% url 'categorias:categoria_list' %}"><span class="icon"><i class="bi bi-bookmarks"></i></span> Categorias</a></li>
-                    <li><a href="{% url 'marcas:marca_list' %}"><span class="icon"><i class="bi bi-tags"></i></span> Marcas</a></li>
-                    <li><a href="{% url 'fornecedores:fornecedores_list' %}"><span class="icon"><i class="bi bi-truck"></i></span> Fornecedores</a></li>
+<div class="container">
+    <aside class="sidebar" role="navigation">
+        <div class="logo">
+            <h2>TI <span>ERP</span></h2>
+        </div>
+        <nav>
+            <ul>
+                <!-- Dashboard -->
+                <li><a href="#"><span class="icon"><i class="bi bi-speedometer2"></i></span> Dashboard</a></li>
 
-                    <li><a href="{% url 'produtos:unidade_medida_list' %}"><span class="icon"><i class="bi bi-rulers"></i></span> Unidades</a></li>
-                    <li><a href="{% url 'produtos:campo_dinamico_list' %}"><span class="icon"><i class="bi bi-sliders"></i></span> Campos Dinâmicos</a></li>
-                    <li><a href="{% url 'movimentacao:tipo_movimentacao_list' %}"><span class="icon"><i class="bi bi-repeat"></i></span> Tipos de Mov.</a></li>
-                
-                    <li><a href="{% url 'produtos:produtos_list' %}"><span class="icon"><i class="bi bi-box-seam"></i></span> Produtos</a></li>
+                <li><a href="{% url 'categorias:categoria_list' %}"><span class="icon"><i class="bi bi-bookmarks"></i></span> Categorias</a></li>
+                <li><a href="{% url 'marcas:marca_list' %}"><span class="icon"><i class="bi bi-tags"></i></span> Marcas</a></li>
+                <li><a href="{% url 'fornecedores:fornecedores_list' %}"><span class="icon"><i class="bi bi-truck"></i></span> Fornecedores</a></li>
 
-                    <li><a href="{% url 'movimentacao:movimentacao_list' %}"><span class="icon"><i class="bi bi-arrow-left-right"></i></span> Movimentações</a></li>
 
-                    <li><a href="{% url 'movimentacao:lote_list' %}"><span class="icon"><i class="bi bi-boxes"></i></span> Lotes</a></li>
+                <!-- Gestão de Máquinas -->
+                <li><a href="{% url 'inventario:machine_list' %}"><span class="icon"><i
+                        class="bi bi-pc-display"></i></span> Máquinas</a></li>
+                <li><a href="{% url 'inventario:group_list' %}"><span class="icon"><i
+                        class="bi bi-collection"></i></span> Grupos</a></li>
 
-                    <li><a href="{% url 'movimentacao:historico_estoque_list' %}"><span class="icon"><i class="bi bi-clock-history"></i></span> Histórico</a></li>
+                <!-- Segurança -->
+                <li><a href="{% url 'inventario:blockedsite_list' %}"><span class="icon"><i class="bi bi-shield-x"></i></span>
+                    Sites Bloqueados</a></li>
 
-                    <li><a href="{% url 'authentication:clienteuser_list' %}"><span class="icon"><i class="bi bi-clock-history"></i></span> Usuarios</a></li>
-                </ul>
-            </nav>
-        </aside>
+                <!-- Comunicação -->
+                <li><a href="{% url 'inventario:notification_list' %}"><span class="icon"><i
+                        class="bi bi-bell"></i></span> Notificações</a></li>
 
-        <main class="main-content" role="main">
-            <header>
-                <div class="user-info">
-                    <span>Bem-vindo, {{ user.username }}</span>
-                    <div class="notification-wrapper">
+                <!-- Usuários (já existente) -->
+                <li><a href="{% url 'authentication:clienteuser_list' %}"><span class="icon"><i
+                        class="bi bi-people"></i></span> Usuários</a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main class="main-content" role="main">
+        <header>
+            <div class="user-info">
+                <span>Bem-vindo, {{ user.username }}</span>
+                <div class="notification-wrapper">
                         <span class="notification-icon">
                             <i class="bi bi-bell"></i>
                             {% if notificacoes %}
                                 <span class="notification-count">{{ notificacoes|length }}</span>
                             {% endif %}
                         </span>
-                        <div class="notification-dropdown" id="notificationDropdown">
-                            {% if notificacoes %}
-                                <h3>Notificações</h3>
-                                <ul>
-                                    {% for notificacao in notificacoes %}
-                                        <li {% if not notificacao.lida %}class="unread"{% endif %}>
-                                            {{ notificacao.mensagem }} - {{ notificacao.created_at|date:"d/m/Y H:i" }}
-                                            {% if not notificacao.lida %}
-                                                <a href="{% url 'notificacao:marcar_notificacao_lida' notificacao.id %}" class="btn btn-sm btn-primary mark-as-read">Marcar como lida</a>
-                                            {% endif %}
-                                        </li>
-                                    {% endfor %}
-                                </ul>
-                            {% else %}
-                                <p>Sem notificações</p>
-                            {% endif %}
-                        </div>
+                    <div class="notification-dropdown" id="notificationDropdown">
+                        {% if notificacoes %}
+                        <h3>Notificações</h3>
+                        <ul>
+                            {% for notificacao in notificacoes %}
+                            <li {% if not notificacao.lida %}class="unread" {% endif %}>
+                                {{ notificacao.mensagem }} - {{ notificacao.created_at|date:"d/m/Y H:i" }}
+                                {% if not notificacao.lida %}
+                                <a href="{% url 'notificacao:marcar_notificacao_lida' notificacao.id %}"
+                                   class="btn btn-sm btn-primary mark-as-read">Marcar como lida</a>
+                                {% endif %}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p>Sem notificações</p>
+                        {% endif %}
                     </div>
-                    <form method="post" action="{% url 'authentication:logout' %}">
-                        {% csrf_token %}
-                        <button type="submit" class="logout-btn" title="Sair"><i class="bi bi-box-arrow-right"></i></button>
-                    </form>
                 </div>
-            </header>
-            {% block conteudo %}{% endblock %}
-        </main>
-    </div>
+                <form method="post" action="{% url 'authentication:logout' %}">
+                    {% csrf_token %}
+                    <button type="submit" class="logout-btn" title="Sair"><i class="bi bi-box-arrow-right"></i></button>
+                </form>
+            </div>
+        </header>
+        {% block conteudo %}{% endblock %}
+    </main>
+</div>
 
-    <script src="{% static 'assets/js/script.js' %}"></script>
-    <script src="{% static 'assets/js/charts.js' %}"></script>
-    <script src="{% static 'assets/js/usability.js' %}"></script>
+<script src="{% static 'assets/js/script.js' %}"></script>
+<script src="{% static 'assets/js/charts.js' %}"></script>
+<script src="{% static 'assets/js/usability.js' %}"></script>
 </body>
 </html>

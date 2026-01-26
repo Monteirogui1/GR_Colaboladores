@@ -1,76 +1,280 @@
 {% extends 'layouts/base.html' %}
 
-{% block title %}Detalhe do Fornecedor - ERP{% endblock %}
+{% block title %}Detalhe da Máquina - TI Manager{% endblock %}
 
 {% block conteudo %}
 <div class="content">
     <!-- Cabeçalho -->
     <div class="page-header">
-        <h1>Detalhe do Fornecedor: {{ fornecedor.nome }}</h1>
+        <h1>Máquina: {{ machine.hostname }}</h1>
         <div class="filter-buttons">
-            <a href="{% url 'fornecedores:fornecedores_form' fornecedor.id %}" class="btn btn-edit">Editar Fornecedor</a>
-            <button class="btn btn-delete" data-id="{{ fornecedor.id }}">Excluir Fornecedor</button>
-            <a href="{% url 'fornecedores:fornecedores_list' %}" class="btn btn-secondary">Voltar</a>
+            <a href="{% url 'inventario:machine_update' machine.pk %}" class="btn btn-edit">Editar</a>
+            <button class="btn btn-delete" data-id="{{ machine.id }}">Excluir</button>
+            <a href="{% url 'inventario:machine_list' %}" class="btn btn-secondary">Voltar</a>
         </div>
     </div>
 
-    <!-- Informações do Fornecedor -->
+    <!-- Status da Máquina -->
     <div class="detail-card">
-        <h2>Informações do Fornecedor</h2>
+        <h2>Status</h2>
         <div class="detail-content">
-            <!-- Detalhes -->
             <div class="detail-info">
                 <div class="detail-row">
-                    <span class="detail-label">Nome:</span>
-                    <span class="detail-value">{{ fornecedor.nome }}</span>
+                    <span class="detail-label">Status:</span>
+                    <span class="detail-value">
+                        {% if machine.is_online %}
+                            <span style="color: green;">● Online</span>
+                        {% else %}
+                            <span style="color: red;">● Offline</span>
+                        {% endif %}
+                    </span>
                 </div>
                 <div class="detail-row">
-                    <span class="detail-label">Contato:</span>
-                    <span class="detail-value">{{ fornecedor.contato|default:"Não informado" }}</span>
+                    <span class="detail-label">Última Conexão:</span>
+                    <span class="detail-value">{{ machine.last_seen|date:"d/m/Y H:i:s" }}</span>
                 </div>
                 <div class="detail-row">
-                    <span class="detail-label">Email:</span>
-                    <span class="detail-value">{{ fornecedor.email|default:"Não informado" }}</span>
+                    <span class="detail-label">Usuário Logado:</span>
+                    <span class="detail-value">{{ machine.loggedUser|default:"Nenhum" }}</span>
                 </div>
                 <div class="detail-row">
-                    <span class="detail-label">Descrição:</span>
-                    <span class="detail-value">{{ fornecedor.descricao|default:"Sem descrição" }}</span>
+                    <span class="detail-label">Grupo:</span>
+                    <span class="detail-value">{{ machine.group.name|default:"Sem grupo" }}</span>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Produtos do Fornecedor -->
-    <div class="detail-card produtos-card">
-        <h2>Produtos Fornecidos</h2>
+    <!-- Informações de Hardware -->
+    <div class="detail-card">
+        <h2>Hardware</h2>
+        <div class="detail-content">
+            <div class="detail-info">
+                <div class="detail-row">
+                    <span class="detail-label">Fabricante:</span>
+                    <span class="detail-value">{{ machine.manufacturer|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Modelo:</span>
+                    <span class="detail-value">{{ machine.model|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Serial BIOS:</span>
+                    <span class="detail-value">{{ machine.serial_number|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Versão BIOS:</span>
+                    <span class="detail-value">{{ machine.bios_version|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">CPU:</span>
+                    <span class="detail-value">{{ machine.cpu|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">RAM:</span>
+                    <span class="detail-value">{{ machine.ram_gb|floatformat:2|default:"-" }} GB</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">GPU:</span>
+                    <span class="detail-value">{{ machine.gpu_name|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Driver GPU:</span>
+                    <span class="detail-value">{{ machine.gpu_driver|default:"-" }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Memória RAM -->
+    <div class="detail-card">
+        <h2>Memória RAM</h2>
+        <div class="detail-content">
+            <div class="detail-info">
+                <div class="detail-row">
+                    <span class="detail-label">Slots Totais:</span>
+                    <span class="detail-value">{{ machine.total_memory_slots|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Slots Ocupados:</span>
+                    <span class="detail-value">{{ machine.populated_memory_slots|default:"-" }}</span>
+                </div>
+            </div>
+        </div>
+        {% if machine.memory_modules %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Banco</th>
+                    <th>Localizador</th>
+                    <th>Capacidade (GB)</th>
+                    <th>Velocidade (MHz)</th>
+                    <th>Fabricante</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for module in machine.memory_modules %}
+                <tr>
+                    <td>{{ module.bank_label|default:"-" }}</td>
+                    <td>{{ module.device_locator|default:"-" }}</td>
+                    <td>{{ module.capacity_gb|floatformat:2 }}</td>
+                    <td>{{ module.speed_mhz|default:"-" }}</td>
+                    <td>{{ module.manufacturer|default:"-" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+
+    <!-- Armazenamento -->
+    <div class="detail-card">
+        <h2>Armazenamento</h2>
+        <div class="detail-content">
+            <div class="detail-info">
+                <div class="detail-row">
+                    <span class="detail-label">Espaço Total:</span>
+                    <span class="detail-value">{{ machine.disk_space_gb|floatformat:2|default:"-" }} GB</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Espaço Livre:</span>
+                    <span class="detail-value">{{ machine.disk_free_gb|floatformat:2|default:"-" }} GB</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Espaço Usado:</span>
+                    <span class="detail-value">
+                        {% if machine.disk_space_gb and machine.disk_free_gb %}
+                            {{ machine.disk_space_gb|floatformat:2|add:machine.disk_free_gb|floatformat:2 }} GB
+                        {% else %}
+                            -
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sistema Operacional -->
+    <div class="detail-card">
+        <h2>Sistema Operacional</h2>
+        <div class="detail-content">
+            <div class="detail-info">
+                <div class="detail-row">
+                    <span class="detail-label">SO:</span>
+                    <span class="detail-value">{{ machine.os_caption|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Arquitetura:</span>
+                    <span class="detail-value">{{ machine.os_architecture|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Build:</span>
+                    <span class="detail-value">{{ machine.os_build|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Data de Instalação:</span>
+                    <span class="detail-value">{{ machine.install_date|date:"d/m/Y"|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Último Boot:</span>
+                    <span class="detail-value">{{ machine.last_boot|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Uptime:</span>
+                    <span class="detail-value">{{ machine.uptime_days|floatformat:2|default:"-" }} dias</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rede -->
+    <div class="detail-card">
+        <h2>Rede</h2>
+        <div class="detail-content">
+            <div class="detail-info">
+                <div class="detail-row">
+                    <span class="detail-label">IP:</span>
+                    <span class="detail-value">{{ machine.ip_address }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">MAC:</span>
+                    <span class="detail-value">{{ machine.mac_address|default:"-" }}</span>
+                </div>
+            </div>
+        </div>
+        {% if machine.network_info %}
+        <h3 style="margin-top: 20px;">Adaptadores de Rede</h3>
         <table class="table">
             <thead>
                 <tr>
                     <th>Nome</th>
-                    <th>Categoria</th>
-                    <th>Marca</th>
-                    <th>Preço de Custo</th>
-                    <th>Preço de Venda</th>
-                    <th>Estoque</th>
+                    <th>MAC</th>
+                    <th>IP</th>
+                    <th>Gateway</th>
+                    <th>DNS</th>
+                    <th>DHCP</th>
                 </tr>
             </thead>
             <tbody>
-                {% for produto in produtos %}
-                    <tr>
-                        <td>{{ produto.nome }}</td>
-                        <td>{{ produto.categoria|default:"Não informado" }}</td>
-                        <td>{{ produto.marca|default:"Não informado" }}</td>
-                        <td>R$ {{ produto.preco_custo|floatformat:2 }}</td>
-                        <td>R$ {{ produto.preco_venda|floatformat:2 }}</td>
-                        <td>{{ produto.quantidade|default:"0" }}</td>
-                    </tr>
-                {% empty %}
-                    <tr>
-                        <td colspan="6" class="text-center">Nenhum produto associado a este fornecedor.</td>
-                    </tr>
+                {% for adapter in machine.network_info %}
+                <tr>
+                    <td>{{ adapter.name|default:"-" }}</td>
+                    <td>{{ adapter.mac|default:"-" }}</td>
+                    <td>{{ adapter.ip|default:"-" }}</td>
+                    <td>{{ adapter.gateway|default:"-" }}</td>
+                    <td>{{ adapter.dns|default:"-" }}</td>
+                    <td>{{ adapter.dhcp|yesno:"Sim,Não" }}</td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% endif %}
+    </div>
+
+    <!-- Segurança -->
+    <div class="detail-card">
+        <h2>Segurança</h2>
+        <div class="detail-content">
+            <div class="detail-info">
+                <div class="detail-row">
+                    <span class="detail-label">Antivírus:</span>
+                    <span class="detail-value">{{ machine.antivirus_name|default:"Não detectado" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Estado AV:</span>
+                    <span class="detail-value">{{ machine.av_state|default:"-" }}</span>
+                </div>
+            </div>
+        </div>
+        {% if machine.tpm %}
+        <h3 style="margin-top: 20px;">TPM (Trusted Platform Module)</h3>
+        <div class="detail-info">
+            <div class="detail-row">
+                <span class="detail-label">Presente:</span>
+                <span class="detail-value">{{ machine.tpm.present|yesno:"Sim,Não" }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Pronto:</span>
+                <span class="detail-value">{{ machine.tpm.ready|yesno:"Sim,Não" }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Habilitado:</span>
+                <span class="detail-value">{{ machine.tpm.enabled|yesno:"Sim,Não" }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Ativado:</span>
+                <span class="detail-value">{{ machine.tpm.activated|yesno:"Sim,Não" }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Versão Spec:</span>
+                <span class="detail-value">{{ machine.tpm.spec_version|default:"-" }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Fabricante:</span>
+                <span class="detail-value">{{ machine.tpm.manufacturer|default:"-" }}</span>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

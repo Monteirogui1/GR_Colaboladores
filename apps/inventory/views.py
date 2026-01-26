@@ -12,10 +12,11 @@ from django.utils.decorators import method_decorator
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.utils import timezone
 from django.db import models as dj_models
-from django.views.generic import ListView, DetailView, UpdateView
+from django.views.generic import ListView, DetailView, UpdateView, CreateView, DeleteView
 from django.urls import reverse_lazy
 
-from .models import Machine, BlockedSite, Notification
+from .forms import MachineForm, NotificationForm, BlockedSiteForm, MachineGroupForm
+from .models import Machine, BlockedSite, Notification, MachineGroup
 
 logger = logging.getLogger(__name__)
 
@@ -196,20 +197,165 @@ class AgentVersionView(View):
         })
 
 
-class MachineListView(ListView):
+# ==================== VIEWS PARA INTERFACE WEB ====================
+
+class MachineListView(LoginRequiredMixin, ListView):
     model = Machine
     template_name = 'inventario/machine_list.html'
     context_object_name = 'machines'
+    paginate_by = 20
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+
+        # Filtros
+        hostname = self.request.GET.get('hostname')
+        ip_address = self.request.GET.get('ip_address')
+        group = self.request.GET.get('group')
+        is_online = self.request.GET.get('is_online')
+
+        if hostname:
+            queryset = queryset.filter(hostname__icontains=hostname)
+        if ip_address:
+            queryset = queryset.filter(ip_address__icontains=ip_address)
+        if group:
+            queryset = queryset.filter(group_id=group)
+        if is_online:
+            queryset = queryset.filter(is_online=(is_online == 'true'))
+
+        return queryset.order_by('-last_seen')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['grupos'] = MachineGroup.objects.all()
+        return context
 
 
-class MachineDetailView(DetailView):
+class MachineDetailView(LoginRequiredMixin, DetailView):
     model = Machine
     template_name = 'inventario/machine_detail.html'
     context_object_name = 'machine'
 
 
-class MachineUpdateView(UpdateView):
+class MachineCreateView(LoginRequiredMixin, CreateView):
     model = Machine
-    template_name = 'inventario/machine_update.html'
-    form_class = ...
+    form_class = MachineForm
+    template_name = 'inventario/machine_edit.html'
     success_url = reverse_lazy('inventario:machine_list')
+
+
+class MachineUpdateView(LoginRequiredMixin, UpdateView):
+    model = Machine
+    form_class = MachineForm
+    template_name = 'inventario/machine_edit.html'
+    success_url = reverse_lazy('inventario:machine_list')
+
+
+class MachineDeleteView(LoginRequiredMixin, DeleteView):
+    model = Machine
+    success_url = reverse_lazy('inventario:machine_list')
+
+    def delete(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        success_url = self.get_success_url()
+        self.object.delete()
+        return JsonResponse({'status': 'success', 'redirect': success_url})
+
+
+# ==================== MACHINE GROUP VIEWS ====================
+
+class MachineGroupListView(LoginRequiredMixin, ListView):
+    model = MachineGroup
+    template_name = 'inventario/group_list.html'
+    context_object_name = 'groups'
+
+
+class MachineGroupCreateView(LoginRequiredMixin, CreateView):
+    model = MachineGroup
+    form_class = MachineGroupForm
+    template_name = 'inventario/group_form.html'
+    success_url = reverse_lazy('inventario:group_list')
+
+
+class MachineGroupUpdateView(LoginRequiredMixin, UpdateView):
+    model = MachineGroup
+    form_class = MachineGroupForm
+    template_name = 'inventario/group_form.html'
+    success_url = reverse_lazy('inventario:group_list')
+
+
+class MachineGroupDeleteView(LoginRequiredMixin, DeleteView):
+    model = MachineGroup
+    success_url = reverse_lazy('inventario:group_list')
+
+    def delete(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        success_url = self.get_success_url()
+        self.object.delete()
+        return JsonResponse({'status': 'success', 'redirect': success_url})
+
+
+# ==================== BLOCKED SITE VIEWS ====================
+
+class BlockedSiteListView(LoginRequiredMixin, ListView):
+    model = BlockedSite
+    template_name = 'inventario/blockedsite_list.html'
+    context_object_name = 'sites'
+
+
+class BlockedSiteCreateView(LoginRequiredMixin, CreateView):
+    model = BlockedSite
+    form_class = BlockedSiteForm
+    template_name = 'inventario/blockedsite_form.html'
+    success_url = reverse_lazy('inventario:blockedsite_list')
+
+
+class BlockedSiteUpdateView(LoginRequiredMixin, UpdateView):
+    model = BlockedSite
+    form_class = BlockedSiteForm
+    template_name = 'inventario/blockedsite_form.html'
+    success_url = reverse_lazy('inventario:blockedsite_list')
+
+
+class BlockedSiteDeleteView(LoginRequiredMixin, DeleteView):
+    model = BlockedSite
+    success_url = reverse_lazy('inventario:blockedsite_list')
+
+    def delete(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        success_url = self.get_success_url()
+        self.object.delete()
+        return JsonResponse({'status': 'success', 'redirect': success_url})
+
+
+# ==================== NOTIFICATION VIEWS ====================
+
+class NotificationListView(LoginRequiredMixin, ListView):
+    model = Notification
+    template_name = 'inventario/notification_list.html'
+    context_object_name = 'notifications'
+    ordering = ['-created_at']
+
+
+class NotificationDetailView(LoginRequiredMixin, DetailView):
+    model = Notification
+    template_name = 'inventario/notification_detail.html'
+    context_object_name = 'notification'
+
+
+class NotificationCreateView(LoginRequiredMixin, CreateView):
+    model = Notification
+    form_class = NotificationForm
+    template_name = 'inventario/notification_form.html'
+    success_url = reverse_lazy('inventario:notification_list')
+
+
+class NotificationDeleteView(LoginRequiredMixin, DeleteView):
+    model = Notification
+    success_url = reverse_lazy('inventario:notification_list')
+
+    def delete(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        success_url = self.get_success_url()
+        self.object.delete()
+        return JsonResponse({'status': 'success', 'redirect': success_url})

@@ -1,9 +1,15 @@
+from django.conf import settings
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('', include('apps.authentication.urls', namespace='login')),
+    path('', include('apps.categorias.urls',)),
+    path('', include('apps.fornecedor.urls',)),
+    path('', include('apps.marcas.urls',)),
     path('api/', include('apps.inventory.urls')),
 
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

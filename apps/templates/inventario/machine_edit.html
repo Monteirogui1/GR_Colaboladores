@@ -1,38 +1,164 @@
 {% extends 'layouts/base.html' %}
 
-{% block title %}{% if marca %}Editar Categoria{% else %}Nova Categoria{% endif %} - ERP{% endblock %}
+{% block title %}{% if machine %}Editar Máquina{% else %}Nova Máquina{% endif %} - TI Manager{% endblock %}
 
 {% block conteudo %}
 <div class="content">
     <div class="page-header">
-        <h1>{% if categorias %}Editar Categoria{% else %}Nova Categoria{% endif %}</h1>
-        <a href="{% url 'marcas:marca_list' %}" class="btn btn-secondary">Voltar</a>
+        <h1>{% if machine %}Editar Máquina{% else %}Nova Máquina{% endif %}</h1>
+        <a href="{% url 'inventario:machine_list' %}" class="btn btn-secondary">Voltar</a>
     </div>
+
     <form method="post">
         {% csrf_token %}
-        <div class="form-grid">
-            <div class="form-group">
-                {{ form.nome.label_tag }}
-                {{ form.nome }}
-                {% if form.nome.errors %}
-                    <div class="text-danger">{{ form.nome.errors }}</div>
-                {% endif %}
-            </div>
-            <div class="form-group">
-                {{ form.status.label_tag }}
-                {{ form.status }}
-                {% if form.status.errors %}
-                    <div class="text-danger">{{ form.status.errors }}</div>
-                {% endif %}
-            </div>
-            <div class="form-group full-width">
-                {{ form.descricao.label_tag }}
-                {{ form.descricao }}
-                {% if form.descricao.errors %}
-                    <div class="text-danger">{{ form.descricao.errors }}</div>
-                {% endif %}
+
+        <!-- Informações Básicas -->
+        <div class="detail-card">
+            <h2>Informações Básicas</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    {{ form.hostname.label_tag }}
+                    {{ form.hostname }}
+                    {% if form.hostname.errors %}
+                        <div class="text-danger">{{ form.hostname.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.ip_address.label_tag }}
+                    {{ form.ip_address }}
+                    {% if form.ip_address.errors %}
+                        <div class="text-danger">{{ form.ip_address.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.mac_address.label_tag }}
+                    {{ form.mac_address }}
+                    {% if form.mac_address.errors %}
+                        <div class="text-danger">{{ form.mac_address.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.group.label_tag }}
+                    {{ form.group }}
+                    {% if form.group.errors %}
+                        <div class="text-danger">{{ form.group.errors }}</div>
+                    {% endif %}
+                </div>
             </div>
         </div>
+
+        <!-- Hardware -->
+        <div class="detail-card">
+            <h2>Hardware</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    {{ form.manufacturer.label_tag }}
+                    {{ form.manufacturer }}
+                    {% if form.manufacturer.errors %}
+                        <div class="text-danger">{{ form.manufacturer.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.model.label_tag }}
+                    {{ form.model }}
+                    {% if form.model.errors %}
+                        <div class="text-danger">{{ form.model.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.serial_number.label_tag }}
+                    {{ form.serial_number }}
+                    {% if form.serial_number.errors %}
+                        <div class="text-danger">{{ form.serial_number.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.cpu.label_tag }}
+                    {{ form.cpu }}
+                    {% if form.cpu.errors %}
+                        <div class="text-danger">{{ form.cpu.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.ram_gb.label_tag }}
+                    {{ form.ram_gb }}
+                    {% if form.ram_gb.errors %}
+                        <div class="text-danger">{{ form.ram_gb.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.gpu_name.label_tag }}
+                    {{ form.gpu_name }}
+                    {% if form.gpu_name.errors %}
+                        <div class="text-danger">{{ form.gpu_name.errors }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Armazenamento -->
+        <div class="detail-card">
+            <h2>Armazenamento</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    {{ form.disk_space_gb.label_tag }}
+                    {{ form.disk_space_gb }}
+                    {% if form.disk_space_gb.errors %}
+                        <div class="text-danger">{{ form.disk_space_gb.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.disk_free_gb.label_tag }}
+                    {{ form.disk_free_gb }}
+                    {% if form.disk_free_gb.errors %}
+                        <div class="text-danger">{{ form.disk_free_gb.errors }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Sistema Operacional -->
+        <div class="detail-card">
+            <h2>Sistema Operacional</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    {{ form.os_caption.label_tag }}
+                    {{ form.os_caption }}
+                    {% if form.os_caption.errors %}
+                        <div class="text-danger">{{ form.os_caption.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.os_architecture.label_tag }}
+                    {{ form.os_architecture }}
+                    {% if form.os_architecture.errors %}
+                        <div class="text-danger">{{ form.os_architecture.errors }}</div>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    {{ form.os_build.label_tag }}
+                    {{ form.os_build }}
+                    {% if form.os_build.errors %}
+                        <div class="text-danger">{{ form.os_build.errors }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Segurança -->
+        <div class="detail-card">
+            <h2>Segurança</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    {{ form.antivirus_name.label_tag }}
+                    {{ form.antivirus_name }}
+                    {% if form.antivirus_name.errors %}
+                        <div class="text-danger">{{ form.antivirus_name.errors }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
         <div class="form-actions">
             <button type="submit" class="btn btn-primary">Salvar</button>
         </div>

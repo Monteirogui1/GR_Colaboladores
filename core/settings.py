@@ -9,11 +9,12 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
-
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+APPS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 # Quick-start development settings - unsuitable for production
@@ -37,10 +38,16 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
     'drf_spectacular',
     'import_export',
+    'apps',
+    'apps.authentication',
     'apps.inventory',
-    'rest_framework',
+    'apps.shared',
+    'apps.categorias',
+    'apps.marcas',
+    'apps.fornecedor',
 ]
 
 MIDDLEWARE = [
@@ -55,10 +62,17 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'core.urls'
 
+# Assets Management
+ASSETS_ROOT = os.getenv('ASSETS_ROOT', '/static/assets')
+
+TEMPLATE_DIR = os.path.join(APPS_DIR, "apps/templates")  # ROOT dir for templates
+STATIC_DIR = os.path.join(APPS_DIR, "apps/static")  # ROOT dir for Static
+
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [TEMPLATE_DIR, STATIC_DIR],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -72,6 +86,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
+AUTH_USER_MODEL = 'authentication.User'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
@@ -118,7 +133,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
