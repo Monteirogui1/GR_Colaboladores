@@ -1,0 +1,10 @@
+{% extends 'layouts/base.html' %}
+{% block conteudo %}
+<h1>Excluir Usuário</h1>
+<p>Tem certeza que deseja excluir o usuário "{{ object }}"?</p>
+<form method="post">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-danger">Confirmar Exclusão</button>
+</form>
+<a href="{% url 'authentication:clienteuser_list' %}">Cancelar</a>
+{% endblock %}

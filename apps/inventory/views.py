@@ -12,6 +12,8 @@ from django.utils.decorators import method_decorator
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.utils import timezone
 from django.db import models as dj_models
+from django.views.generic import ListView, DetailView, UpdateView
+from django.urls import reverse_lazy
 
 from .models import Machine, BlockedSite, Notification
 
@@ -49,7 +51,7 @@ class MachineCheckinView(View):
                     'is_online': True,
                     'last_seen': timezone.now(),
 
-                    'loggeduser': hw.get('logged_user'),
+                    'loggedUser': hw.get('logged_user'),
 
                     'tpm': hw.get('tpm'),
 
@@ -192,3 +194,22 @@ class AgentVersionView(View):
             'download_url': request.build_absolute_uri('/api/agent/download/'),
             'sha256': sha256,
         })
+
+
+class MachineListView(ListView):
+    model = Machine
+    template_name = 'inventario/machine_list.html'
+    context_object_name = 'machines'
+
+
+class MachineDetailView(DetailView):
+    model = Machine
+    template_name = 'inventario/machine_detail.html'
+    context_object_name = 'machine'
+
+
+class MachineUpdateView(UpdateView):
+    model = Machine
+    template_name = 'inventario/machine_update.html'
+    form_class = ...
+    success_url = reverse_lazy('inventario:machine_list')
