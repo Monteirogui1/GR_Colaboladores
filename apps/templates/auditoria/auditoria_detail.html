@@ -1,0 +1,220 @@
+{% extends 'layouts/base.html' %}
+
+{% block title %}Auditoria: {{ auditoria.titulo }} - ERP{% endblock %}
+
+{% block conteudo %}
+<div class="content">
+    <!-- Cabeçalho -->
+    <div class="page-header">
+        <h1>{{ auditoria.titulo }}</h1>
+        <div class="filter-buttons">
+            {% if auditoria.status == 'em_andamento' %}
+                <a href="{% url 'auditoria:auditoria_executar' auditoria.pk %}" class="btn btn-primary">
+                    <i class="bi bi-play-fill"></i> Executar
+                </a>
+                <a href="{% url 'auditoria:auditoria_finalizar' auditoria.pk %}" class="btn btn-edit">
+                    <i class="bi bi-flag-fill"></i> Finalizar
+                </a>
+                <button class="btn btn-delete" onclick="cancelarAuditoria({{ auditoria.pk }})">
+                    <i class="bi bi-x-circle"></i> Cancelar
+                </button>
+            {% elif auditoria.status == 'finalizada' %}
+                <a href="{% url 'auditoria:auditoria_relatorio' auditoria.pk %}" class="btn btn-primary">
+                    <i class="bi bi-file-earmark-text"></i> Relatório
+                </a>
+            {% endif %}
+            <a href="{% url 'auditoria:auditoria_list' %}" class="btn btn-secondary">Voltar</a>
+        </div>
+    </div>
+
+    <!-- Informações Principais -->
+    <div class="detail-card">
+        <h2>Informações Gerais</h2>
+        <div class="detail-content">
+            <div class="detail-info">
+                <div class="detail-row">
+                    <span class="detail-label">Status:</span>
+                    <span class="detail-value">
+                        {% if auditoria.status == 'em_andamento' %}
+                            <span style="color: orange;">● {{ auditoria.get_status_display }}</span>
+                        {% elif auditoria.status == 'finalizada' %}
+                            <span style="color: green;">● {{ auditoria.get_status_display }}</span>
+                        {% else %}
+                            <span style="color: red;">● {{ auditoria.get_status_display }}</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Localização:</span>
+                    <span class="detail-value">{{ auditoria.localizacao.nome }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Responsável:</span>
+                    <span class="detail-value">{{ auditoria.responsavel.get_full_name|default:auditoria.responsavel.username|default:"-" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Data de Início:</span>
+                    <span class="detail-value">{{ auditoria.data_inicio|date:"d/m/Y H:i" }}</span>
+                </div>
+                {% if auditoria.data_finalizacao %}
+                <div class="detail-row">
+                    <span class="detail-label">Data de Finalização:</span>
+                    <span class="detail-value">{{ auditoria.data_finalizacao|date:"d/m/Y H:i" }}</span>
+                </div>
+                {% endif %}
+                {% if auditoria.observacoes %}
+                <div class="detail-row">
+                    <span class="detail-label">Observações:</span>
+                    <span class="detail-value">{{ auditoria.observacoes|linebreaks }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Progresso -->
+    <div class="detail-card">
+        <h2>Progresso da Auditoria</h2>
+        <div style="display: flex; justify-content: space-around; margin-top: 20px;">
+            <div style="text-align: center;">
+                <h3 style="font-size: 36px; color: #4CAF50; margin: 0;">{{ auditoria.ativos_verificados }}</h3>
+                <p style="color: #666;">Verificados</p>
+            </div>
+            <div style="text-align: center;">
+                <h3 style="font-size: 36px; color: #ff9800; margin: 0;">{{ auditoria.total_ativos|add:"-"|add:auditoria.ativos_verificados|default:"0" }}</h3>
+                <p style="color: #666;">Pendentes</p>
+            </div>
+            <div style="text-align: center;">
+                <h3 style="font-size: 36px; color: #1a73e8; margin: 0;">{{ progresso }}%</h3>
+                <p style="color: #666;">Concluído</p>
+            </div>
+        </div>
+        <div style="margin-top: 30px;">
+            <div style="width: 100%; height: 40px; background: #e0e0e0; border-radius: 20px; overflow: hidden;">
+                <div style="width: {{ progresso }}%; height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); transition: width 0.3s;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtros de Itens -->
+    <div class="detail-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h2 style="margin: 0;">Ativos da Auditoria</h2>
+            <form method="get" style="display: flex; gap: 10px;">
+                <select name="filtro" class="form-control" style="width: 200px;" onchange="this.form.submit()">
+                    <option value="todos" {% if filtro_atual == 'todos' %}selected{% endif %}>Todos</option>
+                    <option value="verificados" {% if filtro_atual == 'verificados' %}selected{% endif %}>Verificados</option>
+                    <option value="pendentes" {% if filtro_atual == 'pendentes' %}selected{% endif %}>Pendentes</option>
+                </select>
+                <input type="text" name="busca" class="form-control" placeholder="Buscar por etiqueta ou nome" 
+                       value="{{ busca_atual }}" style="width: 300px;">
+                <button type="submit" class="btn btn-primary">Buscar</button>
+            </form>
+        </div>
+
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Etiqueta</th>
+                    <th>Nome</th>
+                    <th>Categoria</th>
+                    <th>Estado Físico</th>
+                    <th>Data Verificação</th>
+                    <th>Verificado Por</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in itens %}
+                <tr>
+                    <td>
+                        {% if item.verificado %}
+                            <span style="color: green; font-size: 20px;"><i class="bi bi-check-circle-fill"></i></span>
+                        {% else %}
+                            <span style="color: orange; font-size: 20px;"><i class="bi bi-clock"></i></span>
+                        {% endif %}
+                    </td>
+                    <td><strong>{{ item.ativo.etiqueta }}</strong></td>
+                    <td>{{ item.ativo.nome }}</td>
+                    <td>{{ item.ativo.categoria.nome|default:"-" }}</td>
+                    <td>
+                        {% if item.estado_fisico %}
+                            <span style="padding: 3px 8px; border-radius: 3px; font-size: 12px; 
+                                {% if item.estado_fisico == 'otimo' %}background: #4CAF50; color: white;
+                                {% elif item.estado_fisico == 'bom' %}background: #8BC34A; color: white;
+                                {% elif item.estado_fisico == 'regular' %}background: #ff9800; color: white;
+                                {% elif item.estado_fisico == 'ruim' %}background: #f44336; color: white;
+                                {% endif %}">
+                                {{ item.get_estado_fisico_display }}
+                            </span>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>{{ item.data_verificacao|date:"d/m/Y H:i"|default:"-" }}</td>
+                    <td>{{ item.verificado_por.get_full_name|default:"-" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center">Nenhum item encontrado.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Histórico -->
+    <div class="detail-card">
+        <h2>Histórico de Atividades</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Data/Hora</th>
+                    <th>Ação</th>
+                    <th>Descrição</th>
+                    <th>Usuário</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for hist in historico %}
+                <tr>
+                    <td>{{ hist.created_at|date:"d/m/Y H:i" }}</td>
+                    <td><strong>{{ hist.acao }}</strong></td>
+                    <td>{{ hist.descricao }}</td>
+                    <td>{{ hist.usuario.get_full_name|default:hist.usuario.username|default:"-" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="text-center">Nenhum evento no histórico.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+function cancelarAuditoria(auditoriaId) {
+    if (confirm('Tem certeza que deseja cancelar esta auditoria? Esta ação não pode ser desfeita.')) {
+        fetch(`/auditoria/${auditoriaId}/cancelar/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                window.location.reload();
+            } else {
+                alert(data.message || 'Erro ao cancelar auditoria');
+            }
+        })
+        .catch(error => {
+            console.error('Erro:', error);
+            alert('Erro ao cancelar auditoria');
+        });
+    }
+}
+</script>
+{% endblock %}
