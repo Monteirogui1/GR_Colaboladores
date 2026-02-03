@@ -1,306 +1,628 @@
-import requests
-import socket
-import time
 import os
-import threading
-import logging
-import colorlog
-import psutil
-import wmi
-from win10toast import ToastNotifier
-import win32serviceutil
-import win32service
-import win32event
-import getpass
+import sys
+import time
+import json
+import socket
 import platform
 import subprocess
+import threading
+import hashlib
+import urllib.request
+import urllib.error
+import ssl
+from datetime import datetime
 
-# ---- CONFIG ----
-API_BASE = "http://192.168.1.54:5001/api"
-HOSTNAME = socket.gethostname()
-CHECKIN_INTERVAL = 300  # 5 minutos
-LOG_PATH = "C:\\Apps\\TI-Agent\\ti_agent.log"
-AGENT_PATH = "C:\\Apps\\TI-Agent\\ti_agent.py"
-CURRENT_VERSION = "2.2"  # Atualize conforme necessário
+# Configurações do Agente
+VERSION = "2.0.0"
+UPDATE_CHECK_INTERVAL = 3600  # 1 hora
+HEARTBEAT_INTERVAL = 300  # 5 minutos
+OFFLINE_CHECK_INTERVAL = 120  # 1 minuto
 
-notifier = ToastNotifier()
 
-# ---- SETUP LOGGING ----
-os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-handler = colorlog.FileHandler(LOG_PATH, encoding='utf-8')
-formatter = colorlog.ColoredFormatter(
-    '%(log_color)s%(asctime)s %(levelname)s:%(name)s: %(message)s')
-handler.setFormatter(formatter)
-logger = colorlog.getLogger('TI-Agent')
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+# Configurações são passadas via argumentos ou variáveis de ambiente
+# NÃO salva em arquivos
 
-def collect_info():
-    info = {}
-    try:
-        c = wmi.WMI()
 
-        # Informações do sistema
-        os_info = c.Win32_OperatingSystem()[0]
-        bios = c.Win32_BIOS()[0]
-        cs = c.Win32_ComputerSystem()[0]
-        cpu = c.Win32_Processor()[0]
-        gpu = c.Win32_VideoController()[0]
+class AgentConfig:
+    """Gerenciador de configurações do agente via ambiente/argumentos"""
 
-        # Host e dados básicos
-        info['hostname'] = platform.node()
-        info['manufacturer'] = cs.Manufacturer
-        info['model'] = cs.Model
-        info['serial_number'] = bios.SerialNumber
-        info['bios_version'] = bios.SMBIOSBIOSVersion
-        info['bios_release'] = bios.ReleaseDate
+    def __init__(self):
+        self.config = self.load_config()
 
-        # Sistema operacional
-        info['os_caption'] = os_info.Caption
-        info['os_architecture'] = os_info.OSArchitecture
-        info['os_build'] = os_info.BuildNumber
-        info['install_date'] = os_info.InstallDate
-        info['last_boot'] = os_info.LastBootUpTime
-        info['uptime_days'] = round((time.time() - psutil.boot_time()) / 86400, 2)
+    def load_config(self):
+        """Carrega configurações de variáveis de ambiente"""
+        return {
+            "server_url": os.environ.get("AGENT_SERVER_URL", "http://192.168.1.54:5001"),
+            "token_hash": os.environ.get("AGENT_TOKEN_HASH", ""),
+            "machine_name": socket.gethostname(),
+            "version": VERSION,
+            "auto_update": os.environ.get("AGENT_AUTO_UPDATE", "true").lower() == "true",
+            "notifications": os.environ.get("AGENT_NOTIFICATIONS", "true").lower() == "true",
+            "check_interval": int(os.environ.get("AGENT_CHECK_INTERVAL", HEARTBEAT_INTERVAL))
+        }
 
-        # CPU e RAM
-        info['cpu'] = cpu.Name
-        info['ram_gb'] = round(float(cs.TotalPhysicalMemory) / (1024 ** 3), 2)
+    def get(self, key, default=None):
+        """Obtém valor de configuração"""
+        return self.config.get(key, default)
 
-        # MEMÓRIA: slots e módulos
-        mem_arrays = c.Win32_PhysicalMemoryArray()
-        total_slots = sum(a.MemoryDevices for a in mem_arrays) if mem_arrays else None
-        modules = []
-        for m in c.Win32_PhysicalMemory():
-            modules.append({
-                "bank_label": m.BankLabel,
-                "capacity_gb": round(float(m.Capacity) / (1024 ** 3), 2),
-                "speed_mhz": m.Speed,
-                "manufacturer": m.Manufacturer,
-                "part_number": m.PartNumber,
-                "serial_number": m.SerialNumber
-            })
-        info['total_memory_slots'] = total_slots
-        info['populated_memory_slots'] = len(modules)
-        info['memory_modules'] = modules
+    def set(self, key, value):
+        """Define valor de configuração (apenas em memória)"""
+        self.config[key] = value
 
-        # Disco: soma todos os drives lógicos do tipo 3
-        disks = c.Win32_LogicalDisk(DriveType=3)
-        total_space = sum(float(d.Size) for d in disks if d.Size) / (1024 ** 3)
-        free_space = sum(float(d.FreeSpace) for d in disks if d.FreeSpace) / (1024 ** 3)
-        info['disk_space_gb'] = round(total_space, 2)
-        info['disk_free_gb'] = round(free_space, 2)
 
-        # GPU
-        info['gpu_name'] = gpu.Name
-        info['gpu_driver'] = gpu.DriverVersion
+class TokenValidator:
+    """Validador de token de instalação"""
 
-        # ANTIVÍRUS via WMI SecurityCenter2
+    @staticmethod
+    def hash_token(token):
+        """Cria hash do token"""
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    @staticmethod
+    def validate_with_server(server_url, token_hash, machine_name):
+        """Valida token diretamente com o servidor"""
         try:
-            sec = wmi.WMI(namespace=r"root\SecurityCenter2")
-            avprods = sec.AntiVirusProduct()
-            # escolhe primeiro não Defender
-            av = next((a for a in avprods if 'defender' not in a.displayName.lower()), avprods[0]) if avprods else None
-            info['antivirus_name'] = av.displayName if av else ""
-            info['av_state'] = getattr(av, 'productState', "")
-        except Exception:
-            info['antivirus_name'] = ""
-            info['av_state'] = ""
+            url = f"{server_url}/api/inventory/agent/validate/"
 
-        # Adaptadores de rede
-        net = []
-        for iface in c.Win32_NetworkAdapterConfiguration(IPEnabled=True):
-            net.append({
-                "description": iface.Description,
-                "mac": iface.MACAddress,
-                "ip": iface.IPAddress[0] if iface.IPAddress else "",
-                "gateway": iface.DefaultIPGateway[0] if iface.DefaultIPGateway else "",
-                "dns": iface.DNSServerSearchOrder or [],
-                "dhcp": iface.DHCPEnabled
-            })
-        info['network_adapters'] = net
+            data = json.dumps({
+                'token_hash': token_hash,
+                'machine_name': machine_name
+            }).encode()
 
-        # Usuários logados
+            context = ssl._create_unverified_context()
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={'Content-Type': 'application/json'}
+            )
+
+            with urllib.request.urlopen(req, timeout=10, context=context) as response:
+                result = json.loads(response.read().decode())
+                return result.get('valid', False)
+
+        except Exception as e:
+            print(f"❌ Erro ao validar token: {e}")
+            return False
+
+
+class NotificationManager:
+    """Gerenciador de notificações do sistema"""
+
+    @staticmethod
+    def notify_windows_native(title, message):
+        """Envia notificação nativa do Windows usando winotify"""
+        if platform.system() != "Windows":
+            return False
+
         try:
-            users = [u.UserName for u in c.Win32_ComputerSystem()]
-            info['logged_users'] = users
-        except:
-            info['logged_users'] = [getpass.getuser()]
+            from winotify import Notification
 
-        # Impressoras
-        pris = []
-        for pr in c.Win32_Printer():
-            pris.append({
-                "name": pr.Name,
-                "default": pr.Default,
-                "status": pr.Status
-            })
-        info['printers'] = pris
+            toast = Notification(
+                app_id="Agente de Inventário",
+                title=title,
+                msg=message,
+                duration="short"
+            )
+            toast.show()
+            return True
 
-        # Processos
-        procs = []
-        for p in psutil.process_iter(['pid', 'name', 'username', 'memory_info']):
+        except ImportError:
+            return False
+        except Exception as e:
+            print(f"⚠️  Erro ao enviar notificação Windows: {e}")
+            return False
+
+    @staticmethod
+    def notify_windows_powershell(title, message):
+        """Envia notificação via PowerShell (fallback)"""
+        try:
+            title_escaped = title.replace('"', '`"')
+            message_escaped = message.replace('"', '`"')
+
+            ps_script = f'''
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+
+$template = @"
+<toast>
+    <visual>
+        <binding template="ToastText02">
+            <text id="1">{title_escaped}</text>
+            <text id="2">{message_escaped}</text>
+        </binding>
+    </visual>
+</toast>
+"@
+
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml($template)
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Agente de Inventário").Show($toast)
+'''
+
+            result = subprocess.run(
+                ["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                capture_output=True,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+            )
+            return result.returncode == 0
+
+        except Exception as e:
+            print(f"⚠️  Erro ao enviar notificação PowerShell: {e}")
+            return False
+
+    @staticmethod
+    def send_notification(title, message, priority="normal", icon_type="info"):
+        """Envia notificação usando o melhor método disponível"""
+        icon_console = {
+            "info": "ℹ️",
+            "success": "✅",
+            "warning": "⚠️",
+            "error": "❌"
+        }
+        print(f"{icon_console.get(icon_type, 'ℹ️')} {title}: {message}")
+
+        if platform.system() != "Windows":
+            return
+
+        # Tenta métodos em ordem de preferência
+        methods = [
+            lambda: NotificationManager.notify_windows_native(title, message),
+            lambda: NotificationManager.notify_windows_powershell(title, message),
+        ]
+
+        for method in methods:
             try:
-                procs.append(p.info)
+                if method():
+                    return
+            except:
+                continue
+
+
+class NetworkMonitor:
+    """Monitor de conectividade de rede"""
+
+    def __init__(self, config):
+        self.config = config
+        self.is_online = False
+        self.last_check = None
+        self.consecutive_failures = 0
+
+    def check_internet(self, host="8.8.8.8", port=53, timeout=3):
+        """Verifica conectividade com a internet"""
+        try:
+            socket.setdefaulttimeout(timeout)
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+            return True
+        except socket.error:
+            return False
+
+    def check_server(self):
+        """Verifica conectividade com o servidor"""
+        try:
+            url = self.config.get('server_url') + '/api/inventory/health/'
+
+            context = ssl._create_unverified_context()
+            req = urllib.request.Request(url, method='GET')
+
+            with urllib.request.urlopen(req, timeout=5, context=context) as response:
+                return response.status == 200
+        except Exception:
+            return False
+
+    def update_status(self):
+        """Atualiza status de conectividade"""
+        self.last_check = datetime.now()
+
+        internet_ok = self.check_internet()
+
+        if not internet_ok:
+            if self.is_online:
+                self.consecutive_failures += 1
+                if self.consecutive_failures >= 3:
+                    self.is_online = False
+                    return "offline"
+            return "offline"
+
+        server_ok = self.check_server()
+
+        if server_ok:
+            self.consecutive_failures = 0
+            if not self.is_online:
+                self.is_online = True
+                return "reconnected"
+            return "online"
+        else:
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= 3 and self.is_online:
+                self.is_online = False
+                return "offline"
+            return "degraded"
+
+
+class AutoUpdater:
+    """Sistema de auto-atualização do agente"""
+
+    def __init__(self, config):
+        self.config = config
+        self.current_version = VERSION
+
+    def check_for_updates(self):
+        """Verifica se há atualizações disponíveis"""
+        if not self.config.get('auto_update'):
+            return None
+
+        try:
+            url = self.config.get('server_url') + '/api/inventory/agent/update/'
+
+            data = json.dumps({
+                'current_version': self.current_version,
+                'machine_name': self.config.get('machine_name')
+            }).encode()
+
+            context = ssl._create_unverified_context()
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={'Content-Type': 'application/json'}
+            )
+
+            with urllib.request.urlopen(req, timeout=10, context=context) as response:
+                result = json.loads(response.read().decode())
+
+                if result.get('update_available'):
+                    return result
+
+        except Exception as e:
+            print(f"⚠️  Erro ao verificar atualizações: {e}")
+
+        return None
+
+    def download_update(self, update_info):
+        """Baixa e aplica atualização"""
+        try:
+            download_url = update_info.get('download_url')
+            new_version = update_info.get('version')
+
+            print(f"⬇️  Baixando atualização {new_version}...")
+
+            if self.config.get('notifications'):
+                NotificationManager.send_notification(
+                    "Atualizando Agente",
+                    f"Baixando versão {new_version}...",
+                    priority="normal",
+                    icon_type="info"
+                )
+
+            context = ssl._create_unverified_context()
+            req = urllib.request.Request(download_url)
+
+            with urllib.request.urlopen(req, timeout=30, context=context) as response:
+                new_content = response.read()
+
+            # Backup do arquivo atual
+            current_file = os.path.abspath(__file__)
+            backup_file = current_file + '.bak'
+
+            if os.path.exists(backup_file):
+                os.remove(backup_file)
+
+            # Cria backup
+            with open(current_file, 'rb') as f:
+                with open(backup_file, 'wb') as b:
+                    b.write(f.read())
+
+            # Salva novo arquivo
+            with open(current_file, 'wb') as f:
+                f.write(new_content)
+
+            print(f"✅ Atualização instalada! Reiniciando...")
+
+            if self.config.get('notifications'):
+                NotificationManager.send_notification(
+                    "Agente Atualizado",
+                    f"Versão {new_version} instalada. Reiniciando...",
+                    priority="normal",
+                    icon_type="success"
+                )
+
+            time.sleep(2)
+
+            # Reinicia o agente
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        except Exception as e:
+            print(f"❌ Erro ao aplicar atualização: {e}")
+
+            if self.config.get('notifications'):
+                NotificationManager.send_notification(
+                    "Erro na Atualização",
+                    "Não foi possível atualizar o agente.",
+                    priority="high",
+                    icon_type="error"
+                )
+
+            # Restaura backup
+            current_file = os.path.abspath(__file__)
+            backup_file = current_file + '.bak'
+
+            if os.path.exists(backup_file):
+                with open(backup_file, 'rb') as b:
+                    with open(current_file, 'wb') as f:
+                        f.write(b.read())
+
+
+class SystemCollector:
+    """Coletor de informações do sistema"""
+
+    @staticmethod
+    def get_system_info():
+        """Coleta informações completas do sistema"""
+        info = {
+            'hostname': socket.gethostname(),
+            'os_name': platform.system(),
+            'os_version': platform.version(),
+            'os_release': platform.release(),
+            'architecture': platform.machine(),
+            'processor': platform.processor(),
+            'python_version': platform.python_version(),
+            'agent_version': VERSION,
+            'last_update': datetime.now().isoformat(),
+        }
+
+        # Informações de rede
+        try:
+            info['ip_address'] = socket.gethostbyname(socket.gethostname())
+        except:
+            info['ip_address'] = "127.0.0.1"
+
+        # Informações de disco (Windows)
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+
+                free_bytes = ctypes.c_ulonglong(0)
+                total_bytes = ctypes.c_ulonglong(0)
+                ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                    ctypes.c_wchar_p("C:\\"),
+                    None,
+                    ctypes.pointer(total_bytes),
+                    ctypes.pointer(free_bytes)
+                )
+
+                info['disk_total_gb'] = round(total_bytes.value / (1024 ** 3), 2)
+                info['disk_free_gb'] = round(free_bytes.value / (1024 ** 3), 2)
+                info['disk_used_gb'] = round((total_bytes.value - free_bytes.value) / (1024 ** 3), 2)
             except:
                 pass
-        info['processes'] = procs
 
-        # Software instalado
-        sw = []
-        for s in c.Win32_Product():
-            sw.append({
-                "name": s.Name,
-                "version": s.Version,
-                "vendor": s.Vendor
-            })
-        info['installed_software'] = sw
-
-        # Patches
-        patches = []
-        for p in c.Win32_QuickFixEngineering():
-            patches.append({
-                "id": p.HotFixID,
-                "desc": p.Description,
-                "installed_on": p.InstalledOn
-            })
-        info['patches'] = patches
-
-        # Serviços críticos
-        services_to_check = ['wuauserv', 'WinDefend', 'bits']
-        svc_status = {}
-        for s in services_to_check:
+        # Memória RAM (Windows)
+        if platform.system() == "Windows":
             try:
-                svc = psutil.win_service_get(s)
-                svc_status[s] = svc.status()
+                import ctypes
+
+                class MEMORYSTATUSEX(ctypes.Structure):
+                    _fields_ = [
+                        ("dwLength", ctypes.c_ulong),
+                        ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                    ]
+
+                memstatus = MEMORYSTATUSEX()
+                memstatus.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+                ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memstatus))
+
+                info['ram_total_gb'] = round(memstatus.ullTotalPhys / (1024 ** 3), 2)
+                info['ram_available_gb'] = round(memstatus.ullAvailPhys / (1024 ** 3), 2)
+                info['ram_used_gb'] = round((memstatus.ullTotalPhys - memstatus.ullAvailPhys) / (1024 ** 3), 2)
             except:
-                svc_status[s] = "not found"
-        info['critical_services'] = svc_status
+                pass
 
-        # Bitlocker
+        return info
+
+    @staticmethod
+    def send_data(config, data):
+        """Envia dados para o servidor com autenticação por token hash"""
         try:
-            out = subprocess.check_output(
-                ['manage-bde', '-status', 'C:'], shell=True,
-                universal_newlines=True, stderr=subprocess.DEVNULL)
-            info['bitlocker'] = out
-        except:
-            info['bitlocker'] = "unavailable"
+            url = config.get('server_url') + config.get('api_endpoint', '/api/checkin/')
 
-        # Eventos recentes
+            # Adiciona hash do token para autenticação
+            data['token_hash'] = config.get('token_hash')
+
+            json_data = json.dumps(data).encode()
+
+            context = ssl._create_unverified_context()
+            req = urllib.request.Request(
+                url,
+                data=json_data,
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+
+            with urllib.request.urlopen(req, timeout=10, context=context) as response:
+                return response.status == 200 or response.status == 201
+
+        except Exception as e:
+            print(f"⚠️  Erro ao enviar dados: {e}")
+            return False
+
+
+class InventoryAgent:
+    """Agente principal de inventário"""
+
+    def __init__(self, token=None):
+        self.config = AgentConfig()
+
+        # Se token foi passado, processa
+        if token:
+            token_hash = TokenValidator.hash_token(token)
+            self.config.set('token_hash', token_hash)
+
+            # Valida com servidor
+            if not TokenValidator.validate_with_server(
+                    self.config.get('server_url'),
+                    token_hash,
+                    self.config.get('machine_name')
+            ):
+                raise ValueError("Token inválido ou expirado")
+
+        # Token deve estar nas variáveis de ambiente
+        elif not self.config.get('token_hash'):
+            raise ValueError("Token não configurado. Use variável de ambiente AGENT_TOKEN_HASH")
+
+        self.network = NetworkMonitor(self.config)
+        self.updater = AutoUpdater(self.config)
+        self.running = False
+        self.last_status = None
+
+    def start(self):
+        """Inicia o agente"""
+        print("=" * 60)
+        print(f"🚀 Agente de Inventário v{VERSION}")
+        print("=" * 60)
+        print(f"📍 Máquina: {self.config.get('machine_name')}")
+        print(f"🌐 Servidor: {self.config.get('server_url')}")
+        print(f"⚙️  Auto-update: {'Ativado' if self.config.get('auto_update') else 'Desativado'}")
+        print(f"🔔 Notificações: {'Ativadas' if self.config.get('notifications') else 'Desativadas'}")
+        print(f"🔒 Seguro: Sem arquivos sensíveis salvos")
+        print("=" * 60)
+
+        self.running = True
+
+        # Notifica inicialização
+        if self.config.get('notifications'):
+            NotificationManager.send_notification(
+                "Agente Iniciado",
+                "Agente de inventário está rodando.",
+                priority="normal",
+                icon_type="info"
+            )
+
+        # Thread para verificação de conectividade
+        threading.Thread(target=self.network_monitor_loop, daemon=True).start()
+
+        # Thread para envio de dados
+        threading.Thread(target=self.data_sender_loop, daemon=True).start()
+
+        # Thread para verificação de atualizações
+        threading.Thread(target=self.update_checker_loop, daemon=True).start()
+
+        print("\n✅ Agente iniciado com sucesso!")
+        print("Rodando como serviço em segundo plano...\n")
+
         try:
-            import win32evtlog
-            h = win32evtlog.OpenEventLog(None, "System")
-            flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
-            evts = win32evtlog.ReadEventLog(h, flags, 0)
-            logs = []
-            for i, ev in enumerate(evts):
-                if i >= 10: break
-                logs.append({
-                    "event_id": ev.EventID,
-                    "source": ev.SourceName,
-                    "category": ev.EventCategory,
-                    "time": str(ev.TimeGenerated),
-                    "message": ev.StringInserts
-                })
-            info['recent_events'] = logs
-        except:
-            info['recent_events'] = []
+            while self.running:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\n\n⏹️  Parando agente...")
+            self.stop()
 
-        info['agent_version'] = CURRENT_VERSION
+    def stop(self):
+        """Para o agente"""
+        self.running = False
 
-    except Exception as e:
-        info['collect_error'] = str(e)
+        if self.config.get('notifications'):
+            NotificationManager.send_notification(
+                "Agente Parado",
+                "Agente de inventário foi encerrado.",
+                priority="normal",
+                icon_type="info"
+            )
 
-    return info
+    def network_monitor_loop(self):
+        """Loop de monitoramento de rede"""
+        while self.running:
+            status = self.network.update_status()
 
-def send_checkin():
-    info = collect_info()
-    payload = {
-        "hostname": HOSTNAME,
-        "ip": info.get("network_adapters", [{}])[0].get("ip", ""),
-        "hardware": info
-    }
+            if status != self.last_status and self.config.get('notifications'):
+                if status == "offline":
+                    NotificationManager.send_notification(
+                        "Agente Offline",
+                        "Conexão com o servidor perdida.",
+                        priority="high",
+                        icon_type="warning"
+                    )
+                    print("🔴 Status: OFFLINE")
+
+                elif status == "reconnected":
+                    NotificationManager.send_notification(
+                        "Agente Online",
+                        "Conexão com o servidor restaurada.",
+                        priority="normal",
+                        icon_type="success"
+                    )
+                    print("🟢 Status: ONLINE")
+
+                self.last_status = status
+
+            time.sleep(OFFLINE_CHECK_INTERVAL)
+
+    def data_sender_loop(self):
+        """Loop de envio de dados"""
+        while self.running:
+            if self.network.is_online:
+                try:
+                    data = SystemCollector.get_system_info()
+                    if SystemCollector.send_data(self.config, data):
+                        print(f"📤 Dados enviados: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                except Exception as e:
+                    print(f"⚠️  Erro no envio de dados: {e}")
+
+            time.sleep(self.config.get('check_interval'))
+
+    def update_checker_loop(self):
+        """Loop de verificação de atualizações"""
+        while self.running:
+            if self.network.is_online:
+                try:
+                    update_info = self.updater.check_for_updates()
+                    if update_info:
+                        print(f"🔄 Atualização disponível: {update_info.get('version')}")
+
+                        if self.config.get('notifications'):
+                            NotificationManager.send_notification(
+                                "Atualização Disponível",
+                                f"Nova versão {update_info.get('version')} disponível. Atualizando...",
+                                priority="normal",
+                                icon_type="info"
+                            )
+
+                        self.updater.download_update(update_info)
+
+                except Exception as e:
+                    print(f"⚠️  Erro na verificação de atualizações: {e}")
+
+            time.sleep(UPDATE_CHECK_INTERVAL)
+
+
+def main():
+    """Função principal"""
+
+    # Verifica se token foi passado como argumento (primeira execução)
+    token = None
+    if len(sys.argv) > 1 and sys.argv[1].startswith('--token='):
+        token = sys.argv[1].split('=')[1]
+
     try:
-        resp = requests.post(f"{API_BASE}/checkin/", json=payload, timeout=15)
-        logger.info(f"Checkin enviado: {resp.status_code}")
+        agent = InventoryAgent(token=token)
+        agent.start()
+    except ValueError as e:
+        print(f"❌ Erro: {e}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n⏹️  Agente interrompido")
+        sys.exit(0)
     except Exception as e:
-        logger.error("Erro no checkin: %s", e)
+        print(f"❌ Erro fatal: {e}")
+        sys.exit(1)
 
-def fetch_notifications():
-    try:
-        resp = requests.get(f"{API_BASE}/notifications/?host={HOSTNAME}", timeout=10)
-        if resp.ok:
-            for n in resp.json():
-                notifier.show_toast(n.get("title"), n.get("message"), duration=8, threaded=True)
-                logger.info(f"Notificação recebida: {n.get('title')}")
-    except Exception as e:
-        logger.error("Erro notificações: %s", e)
-
-def update_blocked_sites():
-    try:
-        resp = requests.get(f"{API_BASE}/checkin/?host={HOSTNAME}", timeout=10)
-        if resp.ok:
-            blocked = resp.json()
-            hosts_file = r"C:\Windows\System32\drivers\etc\hosts"
-            with open(hosts_file, "r", encoding='utf-8') as f:
-                lines = f.readlines()
-            start = "# BLOQUEADOS PELO TI\n"
-            end = "# FIM BLOQUEIO\n"
-            in_block = False
-            filtered = []
-            for line in lines:
-                if line == start:
-                    in_block = True
-                if not in_block:
-                    filtered.append(line)
-                if line == end:
-                    in_block = False
-            if blocked:
-                filtered.append(start)
-                for site in blocked:
-                    filtered.append(f"127.0.0.1 {site}\n")
-                filtered.append(end)
-            with open(hosts_file, "w", encoding='utf-8') as f:
-                f.writelines(filtered)
-            logger.info(f"Arquivo hosts atualizado ({len(blocked)} sites)")
-    except Exception as e:
-        logger.error("Erro no bloqueio de sites: %s", e)
-
-def update_agent():
-    # Ponto para implementar auto-update se necessário
-    pass
-
-def main_loop():
-    while True:
-        send_checkin()
-        update_blocked_sites()
-        fetch_notifications()
-        update_agent()
-        time.sleep(CHECKIN_INTERVAL)
-
-class TIAgentService(win32serviceutil.ServiceFramework):
-    _svc_name_ = "TIAgent"
-    _svc_display_name_ = "TI-Agent Python"
-    _svc_description_ = "Agente Python para gestão de TI, inventário e notificações"
-
-    def __init__(self, args):
-        super().__init__(args)
-        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
-        self.worker = threading.Thread(target=main_loop, daemon=True)
-
-    def SvcDoRun(self):
-        logger.info("Serviço iniciado")
-        self.worker.start()
-        win32event.WaitForSingleObject(self.hWaitStop, win32event.INFINITE)
-
-    def SvcStop(self):
-        logger.info("Serviço finalizado")
-        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        win32event.SetEvent(self.hWaitStop)
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) == 1:
-        main_loop()
-    else:
-        win32serviceutil.HandleCommandLine(TIAgentService)
+    main()

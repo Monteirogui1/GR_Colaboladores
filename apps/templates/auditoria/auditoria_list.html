@@ -137,4 +137,36 @@
     </nav>
     {% endif %}
 </div>
+
+<script>
+// Função para deletar auditoria
+document.querySelectorAll('.btn-delete').forEach(button => {
+    button.addEventListener('click', function() {
+        const auditoriaId = this.getAttribute('data-id');
+
+        if (confirm('Tem certeza que deseja excluir esta auditoria? Esta ação não pode ser desfeita.')) {
+            fetch(`/auditoria/${auditoriaId}/deletar/`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Recarrega a página
+                    window.location.reload();
+                } else {
+                    alert('Erro ao excluir auditoria: ' + (data.message || 'Erro desconhecido'));
+                }
+            })
+            .catch(error => {
+                console.error('Erro:', error);
+                alert('Erro ao excluir auditoria');
+            });
+        }
+    });
+});
+</script>
 {% endblock %}

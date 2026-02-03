@@ -28,7 +28,7 @@ class Auditoria(ClienteBaseModel, models.Model):
         "Status",
         max_length=1,
         choices=STATUS_CHOICES,
-        default='em_andamento'
+        default='0'
     )
     data_inicio = models.DateTimeField("Data de Início", auto_now_add=True)
     data_finalizacao = models.DateTimeField("Data de Finalização", null=True, blank=True)

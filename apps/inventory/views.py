@@ -1,22 +1,29 @@
 import os
 import re
 import json
-import datetime
+from datetime import datetime, timedelta
 import logging
 import hashlib
-
 from django.views import View
-from django.http import JsonResponse, HttpResponse
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth.decorators import login_required
+from django.contrib import messages
+from django.http import JsonResponse, FileResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
 from django.utils.decorators import method_decorator
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.utils import timezone
 from django.db import models as dj_models
 from django.views.generic import ListView, DetailView, UpdateView, CreateView, DeleteView
 from django.urls import reverse_lazy
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.views import APIView
 
 from .forms import MachineForm, NotificationForm, BlockedSiteForm, MachineGroupForm
-from .models import Machine, BlockedSite, Notification, MachineGroup
+from .models import Machine, BlockedSite, Notification, MachineGroup, AgentToken, AgentVersion
 
 logger = logging.getLogger(__name__)
 
@@ -359,3 +366,349 @@ class NotificationDeleteView(LoginRequiredMixin, DeleteView):
         success_url = self.get_success_url()
         self.object.delete()
         return JsonResponse({'status': 'success', 'redirect': success_url})
+
+
+# ============================================================================
+# VIEWS PARA GERENCIAMENTO DE TOKENS
+# ============================================================================
+
+class AgentTokenListView(LoginRequiredMixin, ListView):
+    """Lista todos os tokens gerados"""
+    model = AgentToken
+    template_name = 'inventario/agent_token_list.html'
+    context_object_name = 'tokens'
+    paginate_by = 50
+
+    def get_queryset(self):
+        """Retorna tokens do cliente logado"""
+        queryset = super().get_queryset()
+        # Se tiver filtro por cliente, adicione aqui
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        # Estatísticas
+        all_tokens = AgentToken.objects.all()
+        context['total_tokens'] = all_tokens.count()
+        context['active_tokens'] = all_tokens.filter(is_active=True).count()
+        context['used_tokens'] = all_tokens.filter(used_at__isnull=False).count()
+        context['expired_tokens'] = all_tokens.filter(
+            expires_at__lt=timezone.now()
+        ).count()
+
+        return context
+
+
+class AgentTokenCreateView(LoginRequiredMixin, CreateView):
+    """Gera novos tokens de instalação"""
+    model = AgentToken
+    template_name = 'inventario/agent_token_create.html'
+    fields = []
+    success_url = reverse_lazy('inventario:token_list')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['default_days'] = 7
+        context['max_quantity'] = 50
+        return context
+
+    def post(self, request, *args, **kwargs):
+        try:
+            # Quantidade de tokens
+            quantity = int(request.POST.get('quantity', 1))
+            if quantity < 1 or quantity > 50:
+                raise ValueError("Quantidade deve ser entre 1 e 50")
+
+            # Validade em dias
+            days = request.POST.get('days', '7')
+
+            # Verifica se é validade infinita
+            if days == 'infinite':
+                # Define data muito distante (100 anos no futuro)
+                expires_at = timezone.now() + timedelta(days=36500)
+                validity_text = "sem expiração"
+            else:
+                days = int(days)
+                if days < 1 or days > 365:
+                    raise ValueError("Validade deve ser entre 1 e 365 dias ou infinita")
+                expires_at = timezone.now() + timedelta(days=days)
+                validity_text = f"{days} dias"
+
+            generated_tokens = []
+
+            for _ in range(quantity):
+                # Gera token único
+                while True:
+                    token = AgentToken.generate_token()
+                    token_hash = AgentToken.hash_token(token)
+
+                    if not AgentToken.objects.filter(token=token).exists():
+                        break
+
+                # Cria registro
+                agent_token = AgentToken.objects.create(
+                    token=token,
+                    token_hash=token_hash,
+                    created_by=request.user,
+                    expires_at=expires_at
+                )
+
+                generated_tokens.append(agent_token)
+
+            if quantity == 1:
+                messages.success(
+                    request,
+                    f"✅ Token gerado: <strong>{generated_tokens[0].token}</strong>",
+                    extra_tags='safe'
+                )
+            else:
+                messages.success(
+                    request,
+                    f"✅ {quantity} tokens gerados com sucesso!"
+                )
+
+            return redirect(self.success_url)
+
+        except ValueError as e:
+            messages.error(request, f"❌ Erro: {str(e)}")
+            return redirect('inventario:token_create')
+        except Exception as e:
+            messages.error(request, f"❌ Erro ao gerar token: {str(e)}")
+            return redirect('inventario:token_create')
+
+
+class AgentTokenDeactivateView(LoginRequiredMixin, View):
+    """Desativa um token"""
+
+    def post(self, request, pk):
+        token = get_object_or_404(AgentToken, pk=pk)
+        token.is_active = False
+        token.save()
+
+        messages.success(request, f"✅ Token {token.token} desativado.")
+        return redirect('inventario:token_list')
+
+
+class AgentTokenDeleteView(LoginRequiredMixin, View):
+    """Remove um token"""
+
+    def post(self, request, pk):
+        token = get_object_or_404(AgentToken, pk=pk)
+        token_str = token.token
+        token.delete()
+
+        messages.success(request, f"✅ Token {token_str} removido.")
+        return redirect('inventario:token_list')
+
+
+# ============================================================================
+# VIEWS PARA GERENCIAMENTO DE VERSÕES
+# ============================================================================
+
+class AgentVersionListView(LoginRequiredMixin, ListView):
+    """Lista versões do agente"""
+    model = AgentVersion
+    template_name = 'inventario/agent_version_list.html'
+    context_object_name = 'versions'
+    paginate_by = 50
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        all_versions = AgentVersion.objects.all()
+        context['total_versions'] = all_versions.count()
+        context['active_versions'] = all_versions.filter(is_active=True).count()
+
+        return context
+
+
+class AgentVersionCreateView(LoginRequiredMixin, CreateView):
+    """Cria nova versão do agente"""
+    model = AgentVersion
+    template_name = 'inventario/agent_version_create.html'
+    fields = ['version', 'file_path', 'release_notes', 'is_mandatory']
+    success_url = reverse_lazy('inventario:version_list')
+
+    def form_valid(self, form):
+        form.instance.created_by = self.request.user
+        messages.success(
+            self.request,
+            f"✅ Versão {form.instance.version} criada com sucesso!"
+        )
+        return super().form_valid(form)
+
+    def form_invalid(self, form):
+        messages.error(self.request, "❌ Erro ao criar versão. Verifique os campos.")
+        return super().form_invalid(form)
+
+
+class AgentVersionToggleView(LoginRequiredMixin, View):
+    """Ativa/desativa versão"""
+
+    def post(self, request, pk):
+        version = get_object_or_404(AgentVersion, pk=pk)
+        version.is_active = not version.is_active
+        version.save()
+
+        status_text = "ativada" if version.is_active else "desativada"
+        messages.success(request, f"✅ Versão {version.version} {status_text}.")
+
+        return redirect('inventario:version_list')
+
+
+# ============================================================================
+# API VIEWS (REST) - SEM AUTENTICAÇÃO PARA O AGENTE
+# ============================================================================
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AgentValidateTokenAPIView(APIView):
+    """API para validar token de instalação do agente"""
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        try:
+            data = request.data
+            token = data.get('token', '').strip()
+            machine_name = data.get('machine_name', '')
+
+            if not token:
+                return Response(
+                    {'valid': False, 'message': 'Token não fornecido'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Busca token
+            try:
+                agent_token = AgentToken.objects.get(token=token, is_active=True)
+            except AgentToken.DoesNotExist:
+                return Response(
+                    {'valid': False, 'message': 'Token inválido'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
+            # Verifica expiração
+            if agent_token.is_expired():
+                return Response(
+                    {'valid': False, 'message': 'Token expirado'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
+            # Marca como usado se ainda não foi
+            if not agent_token.used_at:
+                agent_token.mark_as_used(machine_name)
+
+            return Response({
+                'valid': True,
+                'message': 'Token válido',
+                'expires_at': agent_token.expires_at.isoformat()
+            })
+
+        except Exception as e:
+            return Response(
+                {'valid': False, 'message': f'Erro: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AgentCheckUpdateAPIView(APIView):
+    """API para verificar atualizações disponíveis"""
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        try:
+            data = request.data
+            current_version = data.get('current_version', '0.0.0')
+            machine_name = data.get('machine_name', '')
+
+            # Busca versão mais recente ativa
+            latest_version = AgentVersion.objects.filter(
+                is_active=True
+            ).order_by('-created_at').first()
+
+            if not latest_version:
+                return Response({
+                    'update_available': False,
+                    'message': 'Nenhuma versão disponível'
+                })
+
+            # Compara versões (simplificado)
+            def version_tuple(v):
+                try:
+                    return tuple(map(int, v.split('.')))
+                except:
+                    return (0, 0, 0)
+
+            current = version_tuple(current_version)
+            latest = version_tuple(latest_version.version)
+
+            if latest > current or latest_version.is_mandatory:
+                return Response({
+                    'update_available': True,
+                    'version': latest_version.version,
+                    'download_url': request.build_absolute_uri(
+                        f'/api/inventario/agent/download/{latest_version.pk}/'
+                    ),
+                    'release_notes': latest_version.release_notes,
+                    'is_mandatory': latest_version.is_mandatory
+                })
+
+            return Response({
+                'update_available': False,
+                'current_version': current_version,
+                'latest_version': latest_version.version
+            })
+
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AgentDownloadAPIView(APIView):
+    """API para download da versão do agente"""
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, pk):
+        try:
+            version = get_object_or_404(AgentVersion, pk=pk, is_active=True)
+
+            if not version.file_path:
+                return Response(
+                    {'error': 'Arquivo não encontrado'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Retorna arquivo
+            response = FileResponse(
+                version.file_path.open('rb'),
+                content_type='text/x-python'
+            )
+            response['Content-Disposition'] = f'attachment; filename="agent_{version.version}.py"'
+
+            return response
+
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AgentHealthCheckAPIView(APIView):
+    """API de health check do servidor"""
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        return Response({
+            'status': 'healthy',
+            'timestamp': timezone.now().isoformat()
+        })

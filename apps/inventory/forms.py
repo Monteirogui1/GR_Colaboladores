@@ -1,5 +1,5 @@
 from django import forms
-from .models import Machine, MachineGroup, BlockedSite, Notification
+from .models import Machine, MachineGroup, BlockedSite, Notification, AgentVersion
 
 
 class MachineForm(forms.ModelForm):
@@ -78,3 +78,121 @@ class NotificationForm(forms.ModelForm):
             'machines': forms.SelectMultiple(attrs={'class': 'form-control', 'size': 5}),
             'groups': forms.SelectMultiple(attrs={'class': 'form-control', 'size': 5}),
         }
+
+
+class AgentTokenGenerateForm(forms.Form):
+    """Formulário para geração de tokens"""
+
+    quantity = forms.IntegerField(
+        label="Quantidade de Tokens",
+        min_value=1,
+        max_value=50,
+        initial=1,
+        widget=forms.NumberInput(attrs={
+            'class': 'form-control form-control-lg',
+            'placeholder': 'Ex: 1'
+        }),
+        help_text="Gere até 50 tokens de uma vez"
+    )
+
+    days = forms.ChoiceField(
+        label="Validade (dias)",
+        choices=[
+            (1, '1 dia'),
+            (3, '3 dias'),
+            (7, '7 dias (recomendado)'),
+            (14, '14 dias'),
+            (30, '30 dias'),
+            (60, '60 dias'),
+            (90, '90 dias'),
+            (180, '180 dias'),
+            (365, '365 dias (1 ano)'),
+        ],
+        initial=7,
+        widget=forms.Select(attrs={
+            'class': 'form-select form-select-lg'
+        }),
+        help_text="Tempo até o token expirar"
+    )
+
+
+class AgentVersionForm(forms.ModelForm):
+    """Formulário para criação de versão do agente"""
+
+    class Meta:
+        model = AgentVersion
+        fields = ['version', 'file_path', 'release_notes', 'is_mandatory']
+        widgets = {
+            'version': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Ex: 2.1.0'
+            }),
+            'file_path': forms.FileInput(attrs={
+                'class': 'form-control',
+                'accept': '.py'
+            }),
+            'release_notes': forms.Textarea(attrs={
+                'class': 'form-control',
+                'rows': 8,
+                'placeholder': '- Correções de bugs\n- Melhorias de performance\n- Novas funcionalidades'
+            }),
+            'is_mandatory': forms.CheckboxInput(attrs={
+                'class': 'form-check-input'
+            }),
+        }
+        labels = {
+            'version': 'Versão',
+            'file_path': 'Arquivo do Agente (agent.py)',
+            'release_notes': 'Notas de Lançamento',
+            'is_mandatory': 'Atualização Obrigatória',
+        }
+        help_texts = {
+            'version': 'Formato: MAJOR.MINOR.PATCH (ex: 2.1.0)',
+            'file_path': 'Arquivo Python do agente atualizado',
+            'release_notes': 'Descreva as mudanças nesta versão',
+            'is_mandatory': 'Se marcado, todos os agentes serão forçados a atualizar',
+        }
+
+    def clean_version(self):
+        """Valida formato da versão"""
+        version = self.cleaned_data.get('version')
+
+        # Verifica formato básico
+        if not version:
+            raise forms.ValidationError("Versão é obrigatória")
+
+        # Valida formato (simplificado)
+        parts = version.split('.')
+        if len(parts) != 3:
+            raise forms.ValidationError(
+                "Versão deve estar no formato MAJOR.MINOR.PATCH (ex: 2.1.0)"
+            )
+
+        try:
+            for part in parts:
+                int(part)
+        except ValueError:
+            raise forms.ValidationError(
+                "Versão deve conter apenas números separados por pontos"
+            )
+
+        return version
+
+    def clean_file_path(self):
+        """Valida arquivo do agente"""
+        file = self.cleaned_data.get('file_path')
+
+        if file:
+            # Verifica extensão
+            if not file.name.endswith('.py'):
+                raise forms.ValidationError(
+                    "Arquivo deve ser um script Python (.py)"
+                )
+
+            # Verifica tamanho (max 5MB)
+            if file.size > 5 * 1024 * 1024:
+                raise forms.ValidationError(
+                    "Arquivo muito grande. Tamanho máximo: 5MB"
+                )
+
+        return file

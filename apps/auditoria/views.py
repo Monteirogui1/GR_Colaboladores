@@ -28,6 +28,29 @@ from .serializers import (
 )
 
 
+# Mixins customizados para filtro por cliente
+class ClienteQuerySetMixin:
+    """Filtra o queryset pelo cliente do usuário"""
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return queryset.filter(cliente=self.request.user.cliente)
+
+class ClienteCreateMixin:
+    """Adiciona o cliente automaticamente ao criar objeto"""
+    def form_valid(self, form):
+        form.instance.cliente = self.request.user.cliente
+        return super().form_valid(form)
+
+class ClienteObjectMixin:
+    """Garante que objeto pertence ao cliente do usuário"""
+    def get_object(self, queryset=None):
+        obj = super().get_object(queryset)
+        if obj.cliente != self.request.user.cliente:
+            from django.http import Http404
+            raise Http404("Objeto não encontrado")
+        return obj
+
+
 # ==================== AUDITORIAS ====================
 
 class AuditoriaListView(ClienteQuerySetMixin, LoginRequiredMixin, ListView):
@@ -188,87 +211,103 @@ class AuditoriaVerificarItemView(LoginRequiredMixin, View):
     """View AJAX para verificar um item da auditoria"""
 
     def post(self, request, pk, item_id):
-        auditoria = get_object_or_404(
-            Auditoria,
-            pk=pk,
-            cliente=request.user.cliente,
-            status='0'
-        )
+        try:
+            auditoria = get_object_or_404(
+                Auditoria,
+                pk=pk,
+                cliente=request.user.cliente,
+                status='em_andamento'
+            )
 
-        item = get_object_or_404(AuditoriaItem, pk=item_id, auditoria=auditoria)
+            item = get_object_or_404(AuditoriaItem, pk=item_id, auditoria=auditoria)
 
-        # Atualiza o item
-        item.verificado = True
-        item.data_verificacao = timezone.now()
-        item.verificado_por = request.user
+            # Atualiza o item
+            item.verificado = True
+            item.data_verificacao = timezone.now()
+            item.verificado_por = request.user
 
-        # Dados adicionais do formulário
-        item.estado_fisico = request.POST.get('estado_fisico', '')
-        item.localizacao_real = request.POST.get('localizacao_real', '')
-        item.observacao = request.POST.get('observacao', '')
+            # Dados adicionais do formulário
+            item.estado_fisico = request.POST.get('estado_fisico', '')
+            item.localizacao_real = request.POST.get('localizacao_real', '')
+            item.observacao = request.POST.get('observacao', '')
 
-        item.save()
+            item.save()
 
-        # Atualiza estatísticas da auditoria
-        auditoria.atualizar_estatisticas()
+            # Atualiza estatísticas da auditoria
+            auditoria.atualizar_estatisticas()
 
-        # Registra no histórico
-        AuditoriaHistorico.objects.create(
-            auditoria=auditoria,
-            acao='Verificação',
-            descricao=f'Ativo {item.ativo.etiqueta} verificado',
-            usuario=request.user
-        )
+            # Registra no histórico
+            AuditoriaHistorico.objects.create(
+                auditoria=auditoria,
+                acao='Verificação',
+                descricao=f'Ativo {item.ativo.etiqueta} verificado',
+                usuario=request.user
+            )
 
-        return JsonResponse({
-            'status': 'success',
-            'progresso': auditoria.calcular_progresso(),
-            'ativos_verificados': auditoria.ativos_verificados,
-            'total_ativos': auditoria.total_ativos
-        })
+            return JsonResponse({
+                'status': 'success',
+                'progresso': auditoria.calcular_progresso(),
+                'ativos_verificados': auditoria.ativos_verificados,
+                'total_ativos': auditoria.total_ativos
+            })
+        except Exception as e:
+            return JsonResponse({
+                'status': 'error',
+                'message': str(e)
+            }, status=400)
 
 
 class AuditoriaDesverificarItemView(LoginRequiredMixin, View):
     """View AJAX para desmarcar verificação de um item"""
 
     def post(self, request, pk, item_id):
-        auditoria = get_object_or_404(
-            Auditoria,
-            pk=pk,
-            cliente=request.user.cliente,
-            status='0'
-        )
+        try:
+            auditoria = get_object_or_404(
+                Auditoria,
+                pk=pk,
+                cliente=request.user.cliente,
+                status='em_andamento'
+            )
 
-        item = get_object_or_404(AuditoriaItem, pk=item_id, auditoria=auditoria)
+            item = get_object_or_404(AuditoriaItem, pk=item_id, auditoria=auditoria)
 
-        # Remove a verificação
-        item.verificado = False
-        item.data_verificacao = None
-        item.verificado_por = None
-        item.save()
+            # Remove a verificação
+            item.verificado = False
+            item.data_verificacao = None
+            item.verificado_por = None
+            item.save()
 
-        # Atualiza estatísticas
-        auditoria.atualizar_estatisticas()
+            # Atualiza estatísticas
+            auditoria.atualizar_estatisticas()
 
-        # Registra no histórico
-        AuditoriaHistorico.objects.create(
-            auditoria=auditoria,
-            acao='Desverificação',
-            descricao=f'Verificação do ativo {item.ativo.etiqueta} removida',
-            usuario=request.user
-        )
+            # Registra no histórico
+            AuditoriaHistorico.objects.create(
+                auditoria=auditoria,
+                acao='Desverificação',
+                descricao=f'Verificação do ativo {item.ativo.etiqueta} removida',
+                usuario=request.user
+            )
 
-        return JsonResponse({
-            'status': 'success',
-            'progresso': auditoria.calcular_progresso()
-        })
+            return JsonResponse({
+                'status': 'success',
+                'progresso': auditoria.calcular_progresso()
+            })
+        except Exception as e:
+            return JsonResponse({
+                'status': 'error',
+                'message': str(e)
+            }, status=400)
 
 
-class AuditoriaFinalizarView(ClienteObjectMixin, LoginRequiredMixin, View):
+class AuditoriaFinalizarView(LoginRequiredMixin, View):
     """View para finalizar uma auditoria"""
 
     def get(self, request, pk):
-        auditoria = self.get_object()
+        auditoria = get_object_or_404(
+            Auditoria,
+            pk=pk,
+            cliente=request.user.cliente
+        )
         form = FinalizarAuditoriaForm()
 
         return render(request, 'auditoria/auditoria_finalizar.html', {
@@ -278,13 +317,17 @@ class AuditoriaFinalizarView(ClienteObjectMixin, LoginRequiredMixin, View):
         })
 
     def post(self, request, pk):
-        auditoria = self.get_object()
+        auditoria = get_object_or_404(
+            Auditoria,
+            pk=pk,
+            cliente=request.user.cliente
+        )
         form = FinalizarAuditoriaForm(request.POST)
 
         if form.is_valid():
             with transaction.atomic():
                 # Atualiza status da auditoria
-                auditoria.status = '1'
+                auditoria.status = 'finalizada'
                 auditoria.data_finalizacao = timezone.now()
 
                 observacoes_finais = form.cleaned_data.get('observacoes_finais')
@@ -342,14 +385,18 @@ class AuditoriaFinalizarView(ClienteObjectMixin, LoginRequiredMixin, View):
         })
 
 
-class AuditoriaCancelarView(ClienteObjectMixin, LoginRequiredMixin, View):
+class AuditoriaCancelarView(LoginRequiredMixin, View):
     """View para cancelar uma auditoria"""
 
     def post(self, request, pk):
-        auditoria = self.get_object()
+        auditoria = get_object_or_404(
+            Auditoria,
+            pk=pk,
+            cliente=request.user.cliente
+        )
 
-        if auditoria.status == '0':
-            auditoria.status = '2'
+        if auditoria.status == 'em_andamento':
+            auditoria.status = 'cancelada'
             auditoria.save()
 
             # Registra no histórico
@@ -370,10 +417,16 @@ class AuditoriaDeleteView(ClienteObjectMixin, LoginRequiredMixin, DeleteView):
     success_url = reverse_lazy('auditoria:auditoria_list')
 
     def delete(self, request, *args, **kwargs):
-        self.object = self.get_object()
-        success_url = self.get_success_url()
-        self.object.delete()
-        return JsonResponse({'status': 'success', 'redirect': success_url})
+        try:
+            self.object = self.get_object()
+            success_url = self.get_success_url()
+            self.object.delete()
+            return JsonResponse({'status': 'success', 'redirect': success_url})
+        except Exception as e:
+            return JsonResponse({
+                'status': 'error',
+                'message': str(e)
+            }, status=400)
 
 
 # ==================== RELATÓRIOS ====================
@@ -394,10 +447,10 @@ class AuditoriaRelatorioView(ClienteObjectMixin, LoginRequiredMixin, DetailView)
 
         # Ativos por estado físico
         context['por_estado'] = {
-            '0': itens.filter(estado_fisico='0').count(),
-            '1': itens.filter(estado_fisico='1').count(),
-            '2': itens.filter(estado_fisico='2').count(),
-            '3': itens.filter(estado_fisico='3').count(),
+            'otimo': itens.filter(estado_fisico='0').count(),
+            'bom': itens.filter(estado_fisico='1').count(),
+            'regular': itens.filter(estado_fisico='2').count(),
+            'ruim': itens.filter(estado_fisico='3').count(),
         }
 
         return context

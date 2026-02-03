@@ -9,6 +9,45 @@
     <link rel="stylesheet" href="{% static 'assets/css/style.css' %}">
     <link rel="shortcut icon" href="{% static 'assets/img/favicon.png' %}" type="image/x-icon"/>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <style>
+        /* Estilos para submenus */
+        .sidebar nav ul li {
+            position: relative;
+        }
+
+        .sidebar nav ul li.has-submenu > a {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar nav ul li.has-submenu > a .submenu-toggle {
+            transition: transform 0.3s ease;
+        }
+
+        .sidebar nav ul li.has-submenu.open > a .submenu-toggle {
+            transform: rotate(180deg);
+        }
+
+        .submenu {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .sidebar nav ul li.has-submenu.open .submenu {
+            max-height: 500px;
+        }
+
+        .submenu li a {
+            padding-left: 50px;
+            font-size: 14px;
+        }
+
+        .submenu li a:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+    </style>
 </head>
 <body>
 <div class="container">
@@ -21,37 +60,80 @@
                 <!-- Dashboard -->
                 <li><a href="#"><span class="icon"><i class="bi bi-speedometer2"></i></span> Dashboard</a></li>
 
-                <li><a href="{% url 'categorias:categoria_list' %}"><span class="icon"><i
-                        class="bi bi-bookmarks"></i></span> Categorias</a></li>
-                <li><a href="{% url 'marcas:marca_list' %}"><span class="icon"><i class="bi bi-tags"></i></span> Marcas</a>
+                <!-- Cadastros Básicos -->
+                <li class="has-submenu">
+                    <a href="javascript:void(0)" onclick="toggleSubmenu(this)">
+                        <span><i class="bi bi-folder"></i> Cadastros Básicos</span>
+                        <i class="bi bi-chevron-down submenu-toggle"></i>
+                    </a>
+                    <ul class="submenu">
+                        <li><a href="{% url 'categorias:categoria_list' %}"><span class="icon"><i class="bi bi-bookmarks"></i></span> Categorias</a></li>
+                        <li><a href="{% url 'marcas:marca_list' %}"><span class="icon"><i class="bi bi-tags"></i></span> Marcas</a></li>
+                        <li><a href="{% url 'fornecedores:fornecedores_list' %}"><span class="icon"><i class="bi bi-truck"></i></span> Fornecedores</a></li>
+                    </ul>
                 </li>
-                <li><a href="{% url 'fornecedores:fornecedores_list' %}"><span class="icon"><i class="bi bi-truck"></i></span>
-                    Fornecedores</a></li>
 
-                <li><a href="{% url 'ativos:status_list' %}"><span class="icon"><i class="bi bi-tag"></i></span> Status
-                    de Ativos</a></li>
-                <li><a href="{% url 'ativos:localizacao_list' %}"><span class="icon"><i
-                        class="bi bi-geo-alt"></i></span> Localizações</a></li>
-                <li><a href="{% url 'ativos:ativo_list' %}"><span class="icon"><i class="bi bi-box-seam"></i></span>
-                    Ativos</a></li>
+                <!-- Gestão de Ativos -->
+                <li class="has-submenu">
+                    <a href="javascript:void(0)" onclick="toggleSubmenu(this)">
+                        <span><i class="bi bi-box-seam"></i> Gestão de Ativos</span>
+                        <i class="bi bi-chevron-down submenu-toggle"></i>
+                    </a>
+                    <ul class="submenu">
+                        <li><a href="{% url 'ativos:ativo_list' %}"><span class="icon"><i class="bi bi-box-seam"></i></span> Ativos</a></li>
+                        <li><a href="{% url 'ativos:status_list' %}"><span class="icon"><i class="bi bi-tag"></i></span> Status de Ativos</a></li>
+                        <li><a href="{% url 'ativos:localizacao_list' %}"><span class="icon"><i class="bi bi-geo-alt"></i></span> Localizações</a></li>
+                    </ul>
+                </li>
 
-                <!-- Gestão de Máquinas -->
-                <li><a href="{% url 'inventario:machine_list' %}"><span class="icon"><i
-                        class="bi bi-pc-display"></i></span> Máquinas</a></li>
-                <li><a href="{% url 'inventario:group_list' %}"><span class="icon"><i
-                        class="bi bi-collection"></i></span> Grupos</a></li>
+                <!-- Auditoria -->
+                <li><a href="{% url 'auditoria:auditoria_list' %}"><i class="bi bi-clipboard-check"></i> Auditoria</a></li>
+
+                <!-- Inventário de TI -->
+                <li class="has-submenu">
+                    <a href="javascript:void(0)" onclick="toggleSubmenu(this)">
+                        <span><i class="bi bi-pc-display"></i> Inventário de TI</span>
+                        <i class="bi bi-chevron-down submenu-toggle"></i>
+                    </a>
+                    <ul class="submenu">
+                        <li><a href="{% url 'inventario:machine_list' %}"><span class="icon"><i class="bi bi-pc-display"></i></span> Máquinas</a></li>
+                        <li><a href="{% url 'inventario:group_list' %}"><span class="icon"><i class="bi bi-collection"></i></span> Grupos</a></li>
+                        <li><a href="{% url 'inventario:token_list' %}"><span class="icon"><i class="bi bi-collection"></i></span> Tokens</a></li>
+                    </ul>
+                </li>
 
                 <!-- Segurança -->
-                <li><a href="{% url 'inventario:blockedsite_list' %}"><span class="icon"><i class="bi bi-shield-x"></i></span>
-                    Sites Bloqueados</a></li>
+                <li class="has-submenu">
+                    <a href="javascript:void(0)" onclick="toggleSubmenu(this)">
+                        <span><i class="bi bi-shield-check"></i> Segurança</span>
+                        <i class="bi bi-chevron-down submenu-toggle"></i>
+                    </a>
+                    <ul class="submenu">
+                        <li><a href="{% url 'inventario:blockedsite_list' %}"><span class="icon"><i class="bi bi-shield-x"></i></span> Sites Bloqueados</a></li>
+                    </ul>
+                </li>
 
                 <!-- Comunicação -->
-                <li><a href="{% url 'inventario:notification_list' %}"><span class="icon"><i
-                        class="bi bi-bell"></i></span> Notificações</a></li>
+                <li class="has-submenu">
+                    <a href="javascript:void(0)" onclick="toggleSubmenu(this)">
+                        <span><i class="bi bi-chat-dots"></i> Comunicação</span>
+                        <i class="bi bi-chevron-down submenu-toggle"></i>
+                    </a>
+                    <ul class="submenu">
+                        <li><a href="{% url 'inventario:notification_list' %}"><span class="icon"><i class="bi bi-bell"></i></span> Notificações</a></li>
+                    </ul>
+                </li>
 
-                <!-- Usuários (já existente) -->
-                <li><a href="{% url 'authentication:clienteuser_list' %}"><span class="icon"><i
-                        class="bi bi-people"></i></span> Usuários</a></li>
+                <!-- Administração -->
+                <li class="has-submenu">
+                    <a href="javascript:void(0)" onclick="toggleSubmenu(this)">
+                        <span><i class="bi bi-gear"></i> Administração</span>
+                        <i class="bi bi-chevron-down submenu-toggle"></i>
+                    </a>
+                    <ul class="submenu">
+                        <li><a href="{% url 'authentication:clienteuser_list' %}"><span class="icon"><i class="bi bi-people"></i></span> Usuários</a></li>
+                    </ul>
+                </li>
             </ul>
         </nav>
     </aside>
@@ -95,6 +177,45 @@
         {% block conteudo %}{% endblock %}
     </main>
 </div>
+
+<script>
+    // Função para alternar submenus
+    function toggleSubmenu(element) {
+        const parentLi = element.parentElement;
+        const wasOpen = parentLi.classList.contains('open');
+
+        // Fecha todos os outros submenus
+        document.querySelectorAll('.sidebar nav ul li.has-submenu').forEach(item => {
+            item.classList.remove('open');
+        });
+
+        // Abre o submenu clicado se ele estava fechado
+        if (!wasOpen) {
+            parentLi.classList.add('open');
+        }
+    }
+
+    // Marca o menu ativo baseado na URL atual
+    document.addEventListener('DOMContentLoaded', function() {
+        const currentPath = window.location.pathname;
+        const menuLinks = document.querySelectorAll('.sidebar nav a[href]');
+
+        menuLinks.forEach(link => {
+            if (link.getAttribute('href') === currentPath) {
+                link.classList.add('active');
+
+                // Se o link estiver dentro de um submenu, abre o submenu
+                const submenu = link.closest('.submenu');
+                if (submenu) {
+                    const parentLi = submenu.closest('li.has-submenu');
+                    if (parentLi) {
+                        parentLi.classList.add('open');
+                    }
+                }
+            }
+        });
+    });
+</script>
 
 <script src="{% static 'assets/js/script.js' %}"></script>
 <script src="{% static 'assets/js/charts.js' %}"></script>

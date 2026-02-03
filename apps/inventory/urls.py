@@ -30,7 +30,9 @@ from .views import (
     NotificationListView,
     NotificationDetailView,
     NotificationCreateView,
-    NotificationDeleteView,
+    NotificationDeleteView, AgentVersionListView, AgentVersionCreateView, AgentTokenDeleteView, AgentVersionToggleView,
+    AgentValidateTokenAPIView, AgentCheckUpdateAPIView, AgentDownloadAPIView, AgentHealthCheckAPIView,
+    AgentTokenDeactivateView, AgentTokenCreateView, AgentTokenListView,
 )
 
 app_name = 'inventario'
@@ -39,7 +41,7 @@ urlpatterns = [
     # ==================== API ENDPOINTS ====================
     path('checkin/', MachineCheckinView.as_view(), name='checkin'),
     path('run/<int:machine_id>/', RunCommandView.as_view(), name='run_command'),
-    path('api/notifications/', MachineNotificationView.as_view(), name='machine-notifications'),
+    path('notifications/', MachineNotificationView.as_view(), name='machine-notifications'),
     path('agent/download/', AgentDownloadView.as_view(), name='agent_download'),
     path('agent/version/', AgentVersionView.as_view(), name='agent_version'),
 
@@ -67,4 +69,82 @@ urlpatterns = [
     path('notifications/<int:pk>/', NotificationDetailView.as_view(), name='notification_detail'),
     path('notifications/new/', NotificationCreateView.as_view(), name='notification_create'),
     path('notifications/<int:pk>/delete/', NotificationDeleteView.as_view(), name='notification_delete'),
+
+    # ============================================================================
+    # GERENCIAMENTO DE TOKENS (Requer Login)
+    # ============================================================================
+
+    path(
+        'agent/tokens/',
+        AgentTokenListView.as_view(),
+        name='token_list'
+    ),
+
+    path(
+        'agent/tokens/create/',
+        AgentTokenCreateView.as_view(),
+        name='token_create'
+    ),
+
+    path(
+        'agent/tokens/<int:pk>/deactivate/',
+        AgentTokenDeactivateView.as_view(),
+        name='token_deactivate'
+    ),
+
+    path(
+        'agent/tokens/<int:pk>/delete/',
+        AgentTokenDeleteView.as_view(),
+        name='token_delete'
+    ),
+
+    # ============================================================================
+    # GERENCIAMENTO DE VERSÕES (Requer Login)
+    # ============================================================================
+
+    path(
+        'agent/versions/',
+        AgentVersionListView.as_view(),
+        name='version_list'
+    ),
+
+    path(
+        'agent/versions/create/',
+        AgentVersionCreateView.as_view(),
+        name='version_create'
+    ),
+
+    path(
+        'agent/versions/<int:pk>/toggle/',
+        AgentVersionToggleView.as_view(),
+        name='version_toggle'
+    ),
+
+    # ============================================================================
+    # API ENDPOINTS (Sem autenticação - para o agente usar)
+    # ============================================================================
+
+    path(
+        'inventory/agent/validate/',
+        AgentValidateTokenAPIView.as_view(),
+        name='api_validate_token'
+    ),
+
+    path(
+        'inventory/agent/update/',
+        AgentCheckUpdateAPIView.as_view(),
+        name='api_check_update'
+    ),
+
+    path(
+        'inventory/agent/download/<int:pk>/',
+        AgentDownloadAPIView.as_view(),
+        name='api_download_agent'
+    ),
+
+    path(
+        'inventory/health/',
+        AgentHealthCheckAPIView.as_view(),
+        name='api_health_check'
+    ),
 ]

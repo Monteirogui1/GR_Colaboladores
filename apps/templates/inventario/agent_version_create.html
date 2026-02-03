@@ -1,0 +1,175 @@
+{% extends 'layouts/base.html' %}
+
+{% block title %}Nova Versão - Agente{% endblock %}
+
+{% block conteudo %}
+<div class="content">
+    <div class="page-header">
+        <h1>{% if object %}Editar Versão{% else %}Nova Versão do Agente{% endif %}</h1>
+        <a href="{% url 'inventario:version_list' %}" class="btn btn-secondary">Voltar</a>
+    </div>
+
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+
+        {% if form.errors %}
+        <div style="background: #fee; border: 1px solid #fcc; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
+            <strong style="color: #c00;">⚠ Erros no formulário:</strong>
+            <ul style="margin: 10px 0 0 20px; color: #c00;">
+                {% for field in form %}
+                    {% for error in field.errors %}
+                        <li>{{ field.label }}: {{ error }}</li>
+                    {% endfor %}
+                {% endfor %}
+                {% for error in form.non_field_errors %}
+                    <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <div class="form-grid">
+            <div class="form-group">
+                {{ form.version.label_tag }}
+                {{ form.version }}
+                <small class="form-text">{{ form.version.help_text }}</small>
+                {% if form.version.errors %}
+                    <div class="text-danger">{{ form.version.errors }}</div>
+                {% endif %}
+            </div>
+
+            <div class="form-group">
+                {{ form.file_path.label_tag }}
+                {{ form.file_path }}
+                <small class="form-text">{{ form.file_path.help_text }}</small>
+                {% if form.file_path.errors %}
+                    <div class="text-danger">{{ form.file_path.errors }}</div>
+                {% endif %}
+            </div>
+
+            <div class="form-group full-width">
+                {{ form.release_notes.label_tag }}
+                {{ form.release_notes }}
+                <small class="form-text">{{ form.release_notes.help_text }}</small>
+                {% if form.release_notes.errors %}
+                    <div class="text-danger">{{ form.release_notes.errors }}</div>
+                {% endif %}
+            </div>
+
+            <div class="form-group">
+                <div class="form-check">
+                    {{ form.is_mandatory }}
+                    {{ form.is_mandatory.label_tag }}
+                </div>
+                <small class="form-text">{{ form.is_mandatory.help_text }}</small>
+                {% if form.is_mandatory.errors %}
+                    <div class="text-danger">{{ form.is_mandatory.errors }}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Salvar Versão</button>
+            <a href="{% url 'inventario:version_list' %}" class="btn btn-secondary">Cancelar</a>
+        </div>
+    </form>
+
+    <!-- Cards Informativos Lado a Lado -->
+    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-top: 30px;">
+        <!-- Versionamento Semântico -->
+        <div class="detail-card">
+            <h2>📋 Versionamento Semântico</h2>
+            <div class="detail-content">
+                <p style="margin-bottom: 15px;"><strong>Formato: MAJOR.MINOR.PATCH</strong></p>
+                
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; margin-bottom: 10px;">
+                    <strong style="color: #0066cc;">MAJOR</strong> (ex: <code>2</code>.0.0)
+                    <div style="font-size: 13px; color: #666; margin-top: 5px;">Mudanças incompatíveis com versões anteriores</div>
+                </div>
+                
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; margin-bottom: 10px;">
+                    <strong style="color: #0066cc;">MINOR</strong> (ex: 2.<code>1</code>.0)
+                    <div style="font-size: 13px; color: #666; margin-top: 5px;">Novas funcionalidades compatíveis</div>
+                </div>
+                
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 4px;">
+                    <strong style="color: #0066cc;">PATCH</strong> (ex: 2.1.<code>5</code>)
+                    <div style="font-size: 13px; color: #666; margin-top: 5px;">Correções de bugs</div>
+                </div>
+
+                <p style="margin-top: 15px; margin-bottom: 5px;"><strong>Exemplos:</strong></p>
+                <ul style="margin: 0; padding-left: 20px;">
+                    <li><code>2.0.0</code> - Nova versão principal</li>
+                    <li><code>2.1.0</code> - Adicionar funcionalidades</li>
+                    <li><code>2.1.1</code> - Corrigir bugs</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Atenção -->
+        <div class="detail-card" style="border-left: 4px solid #ff9800;">
+            <h2 style="color: #ff9800;">⚠ Importante</h2>
+            <div class="detail-content">
+                <div style="background: #fff3e0; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+                    <strong style="display: block; margin-bottom: 8px;">Antes de Criar</strong>
+                    <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+                        <li>Teste a nova versão completamente</li>
+                        <li>Verifique compatibilidade</li>
+                        <li>Documente todas as mudanças</li>
+                    </ul>
+                </div>
+
+                <div style="background: #ffebee; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+                    <strong style="display: block; margin-bottom: 8px; color: #c00;">Versão Obrigatória</strong>
+                    <p style="margin: 0; font-size: 14px;">
+                        Se marcada, <strong>todos os agentes</strong> serão forçados a atualizar imediatamente
+                    </p>
+                </div>
+
+                <div style="background: #e3f2fd; padding: 15px; border-radius: 4px;">
+                    <strong style="display: block; margin-bottom: 8px;">Requisitos</strong>
+                    <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+                        <li>Arquivo Python completo do agente</li>
+                        <li>Tamanho máximo: 5MB</li>
+                        <li>Extensão: .py</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fluxo de Atualização -->
+    <div class="detail-card" style="margin-top: 20px;">
+        <h2>🔄 Como Funciona a Atualização</h2>
+        <div class="detail-content">
+            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; text-align: center;">
+                <div>
+                    <div style="width: 50px; height: 50px; background: #0066cc; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; font-weight: bold; font-size: 20px;">1</div>
+                    <div style="font-size: 13px; font-weight: bold;">Criar Versão</div>
+                    <div style="font-size: 12px; color: #666;">Upload do arquivo</div>
+                </div>
+                <div>
+                    <div style="width: 50px; height: 50px; background: #0066cc; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; font-weight: bold; font-size: 20px;">2</div>
+                    <div style="font-size: 13px; font-weight: bold;">Versão Ativa</div>
+                    <div style="font-size: 12px; color: #666;">Disponível para download</div>
+                </div>
+                <div>
+                    <div style="width: 50px; height: 50px; background: #0066cc; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; font-weight: bold; font-size: 20px;">3</div>
+                    <div style="font-size: 13px; font-weight: bold;">Agente Verifica</div>
+                    <div style="font-size: 12px; color: #666;">A cada 1 hora</div>
+                </div>
+                <div>
+                    <div style="width: 50px; height: 50px; background: #0066cc; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; font-weight: bold; font-size: 20px;">4</div>
+                    <div style="font-size: 13px; font-weight: bold;">Download</div>
+                    <div style="font-size: 12px; color: #666;">Baixa nova versão</div>
+                </div>
+                <div>
+                    <div style="width: 50px; height: 50px; background: #28a745; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; font-weight: bold; font-size: 20px;">✓</div>
+                    <div style="font-size: 13px; font-weight: bold;">Atualizado</div>
+                    <div style="font-size: 12px; color: #666;">Reinicia automaticamente</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
