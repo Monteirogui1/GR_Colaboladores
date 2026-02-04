@@ -140,16 +140,19 @@
                     <span class="detail-label">Espaço Livre:</span>
                     <span class="detail-value">{{ machine.disk_free_gb|floatformat:2|default:"-" }} GB</span>
                 </div>
-                <div class="detail-row">
-                    <span class="detail-label">Espaço Usado:</span>
-                    <span class="detail-value">
-                        {% if machine.disk_space_gb and machine.disk_free_gb %}
-                            {{ machine.disk_space_gb|floatformat:2|add:machine.disk_free_gb|floatformat:2 }} GB
-                        {% else %}
-                            -
-                        {% endif %}
-                    </span>
-                </div>
+<!--                <div class="detail-row">-->
+<!--                    <span class="detail-label">Espaço Usado:</span>-->
+<!--                    <span class="detail-value">-->
+<!--                        {% if machine.disk_space_gb and machine.disk_free_gb %}-->
+<!--                            {% widthratio machine.disk_space_gb 1 100 as total_scaled %}-->
+<!--                            {% widthratio machine.disk_free_gb 1 100 as free_scaled %}-->
+<!--                            {% widthratio total_scaled|add:"-"|add:free_scaled 100 1 as used %}-->
+<!--                            {{ used|floatformat:2 }} GB-->
+<!--                        {% else %}-->
+<!--                            - -->
+<!--                        {% endif %}-->
+<!--                    </span>-->
+<!--                </div>-->
             </div>
         </div>
     </div>

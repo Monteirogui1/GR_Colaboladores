@@ -7,23 +7,42 @@ import platform
 import subprocess
 import threading
 import hashlib
-import urllib.request
-import urllib.error
-import ssl
+import logging
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 import psutil
-import wmi
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Configurações do Agente
-VERSION = "2.0.0"
-UPDATE_CHECK_INTERVAL = 3600  # 1 hora
-HEARTBEAT_INTERVAL = 60  # 5 minutos
-OFFLINE_CHECK_INTERVAL = 60  # 1 minuto
+VERSION = "2.0.3"
+UPDATE_CHECK_INTERVAL = 3600
+HEARTBEAT_INTERVAL = 60
+OFFLINE_CHECK_INTERVAL = 60
 
+# Configurar logging
+LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
 
-# Configurações são passadas via argumentos ou variáveis de ambiente
-# NÃO salva em arquivos
+logger = logging.getLogger('InventoryAgent')
+logger.setLevel(logging.INFO)
+
+handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, 'agent.log'),
+    maxBytes=5 * 1024 * 1024,  # 5MB
+    backupCount=3
+)
+handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+))
+logger.addHandler(handler)
+
+# Desabilitar warnings de SSL
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class AgentConfig:
@@ -42,21 +61,41 @@ class AgentConfig:
             "auto_update": os.environ.get("AGENT_AUTO_UPDATE", "true").lower() == "true",
             "notifications": os.environ.get("AGENT_NOTIFICATIONS", "true").lower() == "true",
             "check_interval": int(os.environ.get("AGENT_CHECK_INTERVAL", HEARTBEAT_INTERVAL)),
-
-            # ENDPOINTS CORRETOS
             "endpoint_validate": "/api/inventario/agent/validate/",
-            "endpoint_checkin": "/api/checkin/",
+            "endpoint_checkin": "/api/inventario/checkin/",
             "endpoint_update": "/api/inventario/agent/update/",
             "endpoint_health": "/api/inventario/health/",
         }
 
     def get(self, key, default=None):
-        """Obtém valor de configuração"""
         return self.config.get(key, default)
 
     def set(self, key, value):
-        """Define valor de configuração (apenas em memória)"""
         self.config[key] = value
+
+
+class RequestsSession:
+    """Gerenciador de sessão HTTP com retry"""
+
+    _session = None
+
+    @classmethod
+    def get_session(cls):
+        if cls._session is None:
+            cls._session = requests.Session()
+
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["GET", "POST"]
+            )
+
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            cls._session.mount("http://", adapter)
+            cls._session.mount("https://", adapter)
+
+        return cls._session
 
 
 class TokenValidator:
@@ -64,33 +103,40 @@ class TokenValidator:
 
     @staticmethod
     def hash_token(token):
-        """Cria hash do token"""
         return hashlib.sha256(token.encode()).hexdigest()
 
     @staticmethod
-    def validate_with_server(server_url, token, machine_name):
-        """Valida token diretamente com o servidor"""
+    def validate_with_server(server_url, token_hash, machine_name):
         try:
             url = f"{server_url}/api/inventario/agent/validate/"
 
-            data = json.dumps({
-                'token': token,
+            payload = {
+                'token': token_hash,
                 'machine_name': machine_name
-            }).encode()
+            }
 
-            context = ssl._create_unverified_context()
-            req = urllib.request.Request(
+            session = RequestsSession.get_session()
+            response = session.post(
                 url,
-                data=data,
-                headers={'Content-Type': 'application/json'}
+                json=payload,
+                verify=False,
+                timeout=10
             )
 
-            with urllib.request.urlopen(req, timeout=10, context=context) as response:
-                result = json.loads(response.read().decode())
-                return result.get('valid', False)
+            if response.status_code == 200:
+                result = response.json()
+                is_valid = result.get('valid', False)
+                if is_valid:
+                    logger.info("Token validado com sucesso")
+                else:
+                    logger.error(f"Token inválido: {result.get('message')}")
+                return is_valid
+
+            logger.error(f"Erro ao validar token: HTTP {response.status_code}")
+            return False
 
         except Exception as e:
-            print(f"❌ Erro ao validar token: {e}")
+            logger.error(f"Erro ao validar token: {e}")
             return False
 
 
@@ -99,7 +145,6 @@ class NotificationManager:
 
     @staticmethod
     def notify_windows_native(title, message):
-        """Envia notificação nativa do Windows usando winotify"""
         if platform.system() != "Windows":
             return False
 
@@ -118,75 +163,15 @@ class NotificationManager:
         except ImportError:
             return False
         except Exception as e:
-            print(f"⚠️  Erro ao enviar notificação Windows: {e}")
-            return False
-
-    @staticmethod
-    def notify_windows_powershell(title, message):
-        """Envia notificação via PowerShell (fallback)"""
-        try:
-            title_escaped = title.replace('"', '`"')
-            message_escaped = message.replace('"', '`"')
-
-            ps_script = f'''
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-
-$template = @"
-<toast>
-    <visual>
-        <binding template="ToastText02">
-            <text id="1">{title_escaped}</text>
-            <text id="2">{message_escaped}</text>
-        </binding>
-    </visual>
-</toast>
-"@
-
-$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-$xml.LoadXml($template)
-$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Agente de Inventário").Show($toast)
-'''
-
-            result = subprocess.run(
-                ["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
-                capture_output=True,
-                timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            )
-            return result.returncode == 0
-
-        except Exception as e:
-            print(f"⚠️  Erro ao enviar notificação PowerShell: {e}")
+            logger.error(f"Erro ao enviar notificação: {e}")
             return False
 
     @staticmethod
     def send_notification(title, message, priority="normal", icon_type="info"):
-        """Envia notificação usando o melhor método disponível"""
-        icon_console = {
-            "info": "ℹ️",
-            "success": "✅",
-            "warning": "⚠️",
-            "error": "❌"
-        }
-        print(f"{icon_console.get(icon_type, 'ℹ️')} {title}: {message}")
-
         if platform.system() != "Windows":
-            return
+            return False
 
-        # Tenta métodos em ordem de preferência
-        methods = [
-            lambda: NotificationManager.notify_windows_native(title, message),
-            lambda: NotificationManager.notify_windows_powershell(title, message),
-        ]
-
-        for method in methods:
-            try:
-                if method():
-                    return
-            except:
-                continue
+        return NotificationManager.notify_windows_native(title, message)
 
 
 class NetworkMonitor:
@@ -196,163 +181,95 @@ class NetworkMonitor:
         self.config = config
         self.is_online = False
         self.last_check = None
-        self.consecutive_failures = 0
 
-    def check_internet(self, host="8.8.8.8", port=53, timeout=3):
-        """Verifica conectividade com a internet"""
+    def check_connectivity(self):
         try:
-            socket.setdefaulttimeout(timeout)
-            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
-            return True
-        except socket.error:
+            url = self.config.get('server_url') + self.config.get('endpoint_health')
+
+            session = RequestsSession.get_session()
+            response = session.get(url, verify=False, timeout=5)
+
+            self.is_online = response.status_code == 200
+            self.last_check = datetime.now()
+
+            return self.is_online
+
+        except requests.exceptions.RequestException:
+            self.is_online = False
+            self.last_check = datetime.now()
             return False
-
-    def check_server(self):
-        """Verifica conectividade com o servidor"""
-        try:
-            url = self.config.get('server_url') + self.config.get("endpoint_health")
-
-            context = ssl._create_unverified_context()
-            req = urllib.request.Request(url, method='GET')
-
-            with urllib.request.urlopen(req, timeout=5, context=context) as response:
-                return response.status == 200
-        except Exception:
-            return False
-
-    def update_status(self):
-        """Atualiza status de conectividade"""
-        self.last_check = datetime.now()
-
-        internet_ok = self.check_internet()
-
-        if not internet_ok:
-            if self.is_online:
-                self.consecutive_failures += 1
-                if self.consecutive_failures >= 3:
-                    self.is_online = False
-                    return "offline"
-            return "offline"
-
-        server_ok = self.check_server()
-
-        if server_ok:
-            self.consecutive_failures = 0
-            if not self.is_online:
-                self.is_online = True
-                return "reconnected"
-            return "online"
-        else:
-            self.consecutive_failures += 1
-            if self.consecutive_failures >= 3 and self.is_online:
-                self.is_online = False
-                return "offline"
-            return "degraded"
 
 
 class AutoUpdater:
-    """Sistema de auto-atualização do agente"""
+    """Gerenciador de atualizações automáticas"""
 
     def __init__(self, config):
         self.config = config
-        self.current_version = VERSION
 
     def check_for_updates(self):
-        """Verifica se há atualizações disponíveis"""
-        if not self.config.get('auto_update'):
+        try:
+            url = self.config.get('server_url') + self.config.get('endpoint_update')
+
+            payload = {
+                'current_version': self.config.get('version'),
+                'machine_name': self.config.get('machine_name')
+            }
+
+            session = RequestsSession.get_session()
+            response = session.post(url, json=payload, verify=False, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('update_available'):
+                    logger.info(f"Atualização disponível: {data.get('version')}")
+                    return data
+
             return None
 
-        try:
-            url = self.config.get('server_url') + self.config.get("endpoint_update")
-
-            data = json.dumps({
-                'current_version': self.current_version,
-                'machine_name': self.config.get('machine_name')
-            }).encode()
-
-            context = ssl._create_unverified_context()
-            req = urllib.request.Request(
-                url,
-                data=data,
-                headers={'Content-Type': 'application/json'}
-            )
-
-            with urllib.request.urlopen(req, timeout=10, context=context) as response:
-                result = json.loads(response.read().decode())
-
-                if result.get('update_available'):
-                    return result
-
         except Exception as e:
-            print(f"⚠️  Erro ao verificar atualizações: {e}")
-
-        return None
+            logger.error(f"Erro ao verificar atualizações: {e}")
+            return None
 
     def download_update(self, update_info):
-        """Baixa e aplica atualização"""
+        if not self.config.get('auto_update'):
+            logger.info("Auto-update desativado")
+            return
+
         try:
             download_url = update_info.get('download_url')
-            new_version = update_info.get('version')
 
-            print(f"⬇️  Baixando atualização {new_version}...")
+            logger.info(f"Baixando atualização {update_info.get('version')}")
 
-            if self.config.get('notifications'):
-                NotificationManager.send_notification(
-                    "Atualizando Agente",
-                    f"Baixando versão {new_version}...",
-                    priority="normal",
-                    icon_type="info"
-                )
+            session = RequestsSession.get_session()
+            response = session.get(download_url, verify=False, timeout=30)
 
-            context = ssl._create_unverified_context()
-            req = urllib.request.Request(download_url)
+            if response.status_code == 200:
+                current_file = os.path.abspath(__file__)
+                backup_file = current_file + '.bak'
 
-            with urllib.request.urlopen(req, timeout=30, context=context) as response:
-                new_content = response.read()
+                with open(backup_file, 'wb') as f:
+                    with open(current_file, 'rb') as orig:
+                        f.write(orig.read())
 
-            # Backup do arquivo atual
-            current_file = os.path.abspath(__file__)
-            backup_file = current_file + '.bak'
+                with open(current_file, 'wb') as f:
+                    f.write(response.content)
 
-            if os.path.exists(backup_file):
-                os.remove(backup_file)
+                logger.info("Atualização aplicada com sucesso")
 
-            # Cria backup
-            with open(current_file, 'rb') as f:
-                with open(backup_file, 'wb') as b:
-                    b.write(f.read())
+                if self.config.get('notifications'):
+                    NotificationManager.send_notification(
+                        "Atualização Aplicada",
+                        f"Agente atualizado para v{update_info.get('version')}",
+                        priority="normal",
+                        icon_type="success"
+                    )
 
-            # Salva novo arquivo
-            with open(current_file, 'wb') as f:
-                f.write(new_content)
-
-            print(f"✅ Atualização instalada! Reiniciando...")
-
-            if self.config.get('notifications'):
-                NotificationManager.send_notification(
-                    "Agente Atualizado",
-                    f"Versão {new_version} instalada. Reiniciando...",
-                    priority="normal",
-                    icon_type="success"
-                )
-
-            time.sleep(2)
-
-            # Reinicia o agente
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+                time.sleep(2)
+                os.execv(sys.executable, [sys.executable] + sys.argv)
 
         except Exception as e:
-            print(f"❌ Erro ao aplicar atualização: {e}")
+            logger.error(f"Erro ao aplicar atualização: {e}")
 
-            if self.config.get('notifications'):
-                NotificationManager.send_notification(
-                    "Erro na Atualização",
-                    "Não foi possível atualizar o agente.",
-                    priority="high",
-                    icon_type="error"
-                )
-
-            # Restaura backup
             current_file = os.path.abspath(__file__)
             backup_file = current_file + '.bak'
 
@@ -362,154 +279,239 @@ class AutoUpdater:
                         f.write(b.read())
 
 
-class SystemCollector:
-    """Coletor de informações do sistema"""
+class PowerShellCollector:
+    """Coletor de informações via PowerShell - IGUAL AO AGENT.PS1"""
+
+    POWERSHELL_SCRIPT = r'''
+    $ErrorActionPreference = "SilentlyContinue"
+
+    function Get-SystemInfo {
+        # Usuário logado
+        $loggedUser = ((Get-CimInstance Win32_ComputerSystem).UserName -split '\\')[-1]
+
+        # MAC principal
+        $primaryNet = Get-CimInstance Win32_NetworkAdapterConfiguration |
+                      Where-Object { $_.IPEnabled } | Select-Object -First 1
+        $macAddress = $primaryNet.MACAddress
+
+        # Slots e módulos de RAM
+        $arrays         = Get-CimInstance Win32_PhysicalMemoryArray
+        $totalSlots     = ($arrays | Measure-Object -Property MemoryDevices -Sum).Sum
+        $modules        = Get-CimInstance Win32_PhysicalMemory | ForEach-Object {
+            [pscustomobject]@{
+                bank_label     = $_.BankLabel
+                device_locator = $_.DeviceLocator
+                capacity_gb    = [math]::Round($_.Capacity/1GB,2)
+                speed_mhz      = $_.Speed
+                manufacturer   = $_.Manufacturer
+                part_number    = $_.PartNumber
+                serial_number  = $_.SerialNumber
+            }
+        }
+        $populatedSlots = $modules.Count
+
+        # Antivírus: escolhe primeiro não Defender, senão o primeiro da lista
+        $avList = Get-CimInstance -Namespace "root\SecurityCenter2" -ClassName AntiVirusProduct -ErrorAction SilentlyContinue
+        $av = $avList | Where-Object { $_.displayName -notmatch "Defender" } | Select-Object -First 1
+        if (-not $av) { $av = $avList | Select-Object -First 1 }
+
+        # Outras infos
+        $os    = Get-CimInstance Win32_OperatingSystem
+        $cs    = Get-CimInstance Win32_ComputerSystem
+        $bios  = Get-CimInstance Win32_BIOS
+        $upt   = (Get-Date) - $os.LastBootUpTime
+        $proc  = Get-CimInstance Win32_Processor
+        $disk  = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+        $net   = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object IPEnabled
+        $gpu   = Get-CimInstance Win32_VideoController | Select-Object -First 1
+
+        # TPM
+        try {
+            $tpm = Get-Tpm
+            $tpmInfo = [pscustomobject]@{
+                present          = $tpm.TpmPresent
+                ready            = $tpm.TpmReady
+                enabled          = $tpm.TpmEnabled
+                activated        = $tpm.TpmActivated
+                spec_version     = $tpm.SpecVersion
+                manufacturer     = $tpm.ManufacturerIdTxt
+                manufacturer_ver = $tpm.ManufacturerVersion
+            }
+        } catch {
+            $tpmInfo = [pscustomobject]@{
+                present          = $false
+                ready            = $false
+                enabled          = $false
+                activated        = $false
+                spec_version     = $null
+                manufacturer     = $null
+                manufacturer_ver = $null
+            }
+        }
+
+        # Converter datas para timestamp JSON
+        $installDateJson = $null
+        if ($os.InstallDate) {
+            $installDateJson = "/Date($([Math]::Floor((Get-Date $os.InstallDate).ToUniversalTime().Subtract((Get-Date '1970-01-01')).TotalMilliseconds)))/"
+        }
+
+        $lastBootJson = $null
+        if ($os.LastBootUpTime) {
+            $lastBootJson = "/Date($([Math]::Floor((Get-Date $os.LastBootUpTime).ToUniversalTime().Subtract((Get-Date '1970-01-01')).TotalMilliseconds)))/"
+        }
+
+        $biosReleaseJson = $null
+        if ($bios.ReleaseDate) {
+            $biosReleaseJson = "/Date($([Math]::Floor((Get-Date $bios.ReleaseDate).ToUniversalTime().Subtract((Get-Date '1970-01-01')).TotalMilliseconds)))/"
+        }
+
+        # Espaço em disco usado
+        $diskUsedGb = [math]::Round(($disk.Size - $disk.FreeSpace)/1GB, 2)
+
+        # IP Address
+        $ipAddress = if ($primaryNet.IPAddress) { $primaryNet.IPAddress[0] } else { "127.0.0.1" }
+
+        $result = [pscustomobject]@{
+            hostname               = $env:COMPUTERNAME
+            ip_address             = $ipAddress
+            logged_user            = $loggedUser
+
+            manufacturer           = $cs.Manufacturer
+            model                  = $cs.Model
+            serial_number          = $bios.SerialNumber
+            bios_version           = $bios.SMBIOSBIOSVersion
+            bios_release           = $biosReleaseJson
+
+            os_caption             = $os.Caption
+            os_architecture        = $os.OSArchitecture
+            os_build               = $os.BuildNumber
+            install_date           = $os.InstallDate
+            last_boot              = $os.LastBootUpTime
+            uptime_days            = [math]::Round($upt.TotalDays,2)
+
+            cpu                    = $proc.Name
+            ram_gb                 = [math]::Round(($cs.TotalPhysicalMemory/1GB),2)
+            disk_space_gb          = [math]::Round($disk.Size/1GB,2)
+            disk_free_gb           = [math]::Round($disk.FreeSpace/1GB,2)
+            disk_used_gb           = $diskUsedGb
+
+            mac_address            = $macAddress
+            total_memory_slots     = $totalSlots
+            populated_memory_slots = $populatedSlots
+            memory_modules         = @($modules)
+
+            network_adapters       = @($net | ForEach-Object {
+                [pscustomobject]@{
+                    name    = $_.Description
+                    mac     = $_.MACAddress
+                    ip      = ($_.IPAddress -join ",")
+                    gateway = ($_.DefaultIPGateway -join ",")
+                    dns     = ($_.DNSServerSearchOrder -join ",")
+                    dhcp    = $_.DHCPEnabled
+                }
+            })
+
+            gpu_name               = $gpu.Name
+            gpu_driver             = $gpu.DriverVersion
+
+            antivirus_name         = $av.displayName
+            av_state               = if ($av.productState) { $av.productState.ToString() } else { $null }
+
+            tpm                    = $tpmInfo # Compatibilidade
+        }
+
+        return $result | ConvertTo-Json -Depth 10 -Compress
+    }
+
+    # Executar e retornar JSON
+    Get-SystemInfo
+    '''
 
     @staticmethod
     def get_system_info():
-        c = wmi.WMI()
-
-        hostname = socket.gethostname()
-
-        # IP
-        ip = socket.gethostbyname(socket.gethostname())
-
-        # Usuário logado
-        logged_user = None
+        """Executa PowerShell e retorna informações coletadas"""
         try:
-            logged_user = psutil.users()[0].name
-        except:
-            pass
+            logger.info("Coletando informações via PowerShell...")
 
-        # CPU
-        cpu = platform.processor()
+            # Executar PowerShell
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+                 PowerShellCollector.POWERSHELL_SCRIPT],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+            )
 
-        # RAM
-        ram_gb = round(psutil.virtual_memory().total / (1024 ** 3), 2)
+            if result.returncode != 0:
+                logger.error(f"PowerShell erro: {result.stderr}")
+                raise Exception(f"PowerShell retornou código {result.returncode}")
 
-        # Disco
-        disk = psutil.disk_usage("C:\\")
-        disk_space_gb = round(disk.total / (1024 ** 3), 2)
-        disk_free_gb = round(disk.free / (1024 ** 3), 2)
+            # Parse do JSON retornado
+            output = result.stdout.strip()
 
-        # Uptime
-        boot_time = datetime.fromtimestamp(psutil.boot_time())
-        uptime_days = (datetime.now() - boot_time).days
+            if not output:
+                raise Exception("PowerShell não retornou dados")
 
-        # Sistema Operacional
-        os_info = c.Win32_OperatingSystem()[0]
-        install_date = datetime.strptime(os_info.InstallDate.split('.')[0], "%Y%m%d%H%M%S")
-        last_boot = datetime.strptime(os_info.LastBootUpTime.split('.')[0], "%Y%m%d%H%M%S")
+            data = json.loads(output)
 
-        # Memória física (slots)
-        mem_modules = []
-        for mem in c.Win32_PhysicalMemory():
-            mem_modules.append({
-                "capacity_gb": round(int(mem.Capacity) / (1024 ** 3), 2),
-                "manufacturer": mem.Manufacturer,
-                "speed_mhz": mem.Speed
-            })
+            logger.info(f"Dados coletados com sucesso: {data.get('hostname')}")
 
-        total_slots = len(c.Win32_PhysicalMemoryArray())
-        populated_slots = len(mem_modules)
+            return data
 
-        # Rede
-        network_adapters = []
-        for nic in c.Win32_NetworkAdapterConfiguration(IPEnabled=True):
-            network_adapters.append({
-                "description": nic.Description,
-                "mac": nic.MACAddress,
-                "ip": nic.IPAddress
-            })
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout ao executar PowerShell")
+            raise Exception("Timeout na coleta de dados")
 
-        mac_address = network_adapters[0]["mac"] if network_adapters else None
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro ao parsear JSON do PowerShell: {e}")
+            logger.error(f"Output recebido: {result.stdout}")
+            raise Exception("Dados inválidos retornados pelo PowerShell")
 
-        # GPU
-        gpu = c.Win32_VideoController()[0]
-        gpu_name = gpu.Name
-        gpu_driver = gpu.DriverVersion
-
-        # Antivirus
-        antivirus_name = None
-        av_state = None
-        try:
-            av = wmi.WMI(namespace="root\\SecurityCenter2").AntiVirusProduct()[0]
-            antivirus_name = av.displayName
-            av_state = av.productState
-        except:
-            pass
-
-        # TPM
-        tpm = False
-        try:
-            tpm = bool(c.Win32_Tpm()[0].IsEnabled_InitialValue)
-        except:
-            pass
-
-        return {
-            "hostname": hostname,
-            'ip_address': ip,
-            'is_online': True,
-            'last_seen': datetime.now(),
-
-            'logged_user': logged_user,
-
-            'tpm': tpm,
-
-            'mac_address': mac_address,
-            'total_memory_slots': total_slots,
-            'populated_memory_slots': populated_slots,
-            'memory_modules': mem_modules,
-
-            'os_caption': os_info.Caption,
-            'os_architecture': os_info.OSArchitecture,
-            'os_build': os_info.BuildNumber,
-            'install_date': install_date,
-            'last_boot': last_boot,
-            'uptime_days': uptime_days,
-
-            'cpu': cpu,
-            'ram_gb': ram_gb,
-            'disk_space_gb': disk_space_gb,
-            'disk_free_gb': disk_free_gb,
-
-            'network_adapters': network_adapters,
-            'gpu_name': gpu_name,
-            'gpu_driver': gpu_driver,
-            'antivirus_name': antivirus_name,
-            'av_state': str(av_state),
-        }
+        except Exception as e:
+            logger.error(f"Erro ao coletar informações via PowerShell: {e}")
+            raise
 
     @staticmethod
     def send_data(config, data):
-        """Envia dados para o servidor com autenticação por token hash"""
+        """Envia dados para o servidor - FORMATO IGUAL AO POWERSHELL"""
         try:
             url = config.get('server_url') + config.get("endpoint_checkin")
 
-            # Adiciona hash do token para autenticação
-            data['token_hash'] = config.get('token_hash')
-
+            # FORMATO IDÊNTICO AO POWERSHELL
             payload = {
                 "hostname": data["hostname"],
                 "ip": data.get("ip_address", ""),
-                "hardware": data,  # backend espera dict hardware
-                "token": config.get("token_hash"),
+                "hardware": data,
+                "token": config.get("token_hash")
             }
 
+            logger.info(f"Enviando dados para {url}")
+            logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
 
-            context = ssl._create_unverified_context()
-            req = urllib.request.Request(
+            session = RequestsSession.get_session()
+            response = session.post(
                 url,
-                data=json.dumps(payload, default=str).encode(),
-                headers={'Content-Type': 'application/json'},
-                method='POST'
+                json=payload,
+                verify=False,
+                timeout=10
             )
 
-            with urllib.request.urlopen(req, timeout=10, context=context) as response:
-                return response.status == 200 or response.status == 201
+            if response.status_code in [200, 201]:
+                logger.info("Dados enviados com sucesso")
+                return True
+            else:
+                logger.error(f"Erro HTTP {response.status_code}: {response.text}")
+                return False
 
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Erro de conexão: {e}")
+            return False
+        except requests.exceptions.Timeout:
+            logger.error("Timeout na requisição")
+            return False
         except Exception as e:
-            print(f"⚠️  Erro ao enviar dados: {e}")
+            logger.error(f"Erro ao enviar dados: {e}")
             return False
 
 
@@ -519,12 +521,10 @@ class InventoryAgent:
     def __init__(self, token=None):
         self.config = AgentConfig()
 
-        # Se token foi passado, processa
         if token:
             token_hash = TokenValidator.hash_token(token)
             self.config.set('token_hash', token_hash)
 
-            # Valida com servidor
             if not TokenValidator.validate_with_server(
                     self.config.get('server_url'),
                     token_hash,
@@ -532,30 +532,22 @@ class InventoryAgent:
             ):
                 raise ValueError("Token inválido ou expirado")
 
-        # Token deve estar nas variáveis de ambiente
         elif not self.config.get('token_hash'):
-            raise ValueError("Token não configurado. Use variável de ambiente AGENT_TOKEN_HASH")
+            raise ValueError("Token não configurado")
 
         self.network = NetworkMonitor(self.config)
         self.updater = AutoUpdater(self.config)
         self.running = False
         self.last_status = None
 
+        logger.info(f"Agente iniciado - Versão {VERSION}")
+        logger.info(f"Máquina: {self.config.get('machine_name')}")
+        logger.info(f"Servidor: {self.config.get('server_url')}")
+
     def start(self):
         """Inicia o agente"""
-        print("=" * 60)
-        print(f"🚀 Agente de Inventário v{VERSION}")
-        print("=" * 60)
-        print(f"📍 Máquina: {self.config.get('machine_name')}")
-        print(f"🌐 Servidor: {self.config.get('server_url')}")
-        print(f"⚙️  Auto-update: {'Ativado' if self.config.get('auto_update') else 'Desativado'}")
-        print(f"🔔 Notificações: {'Ativadas' if self.config.get('notifications') else 'Desativadas'}")
-        print(f"🔒 Seguro: Sem arquivos sensíveis salvos")
-        print("=" * 60)
-
         self.running = True
 
-        # Notifica inicialização
         if self.config.get('notifications'):
             NotificationManager.send_notification(
                 "Agente Iniciado",
@@ -564,77 +556,74 @@ class InventoryAgent:
                 icon_type="info"
             )
 
-        # Thread para verificação de conectividade
         threading.Thread(target=self.network_monitor_loop, daemon=True).start()
-
-        # Thread para envio de dados
         threading.Thread(target=self.data_sender_loop, daemon=True).start()
 
-        # Thread para verificação de atualizações
-        threading.Thread(target=self.update_checker_loop, daemon=True).start()
+        if self.config.get('auto_update'):
+            threading.Thread(target=self.update_checker_loop, daemon=True).start()
 
-        print("\n✅ Agente iniciado com sucesso!")
-        print("Rodando como serviço em segundo plano...\n")
+        logger.info("Threads iniciadas com sucesso")
 
         try:
             while self.running:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("\n\n⏹️  Parando agente...")
-            self.stop()
-
-    def stop(self):
-        """Para o agente"""
-        self.running = False
-
-        if self.config.get('notifications'):
-            NotificationManager.send_notification(
-                "Agente Parado",
-                "Agente de inventário foi encerrado.",
-                priority="normal",
-                icon_type="info"
-            )
+            logger.info("Agente interrompido pelo usuário")
+            self.running = False
 
     def network_monitor_loop(self):
         """Loop de monitoramento de rede"""
         while self.running:
-            status = self.network.update_status()
+            status = None
 
-            if status != self.last_status and self.config.get('notifications'):
+            if self.network.check_connectivity():
+                if self.last_status == "offline":
+                    status = "reconnected"
+                    logger.info("Conexão restaurada")
+            else:
+                if self.last_status != "offline":
+                    status = "offline"
+                    logger.warning("Servidor offline")
+
+            if status and self.config.get('notifications'):
                 if status == "offline":
                     NotificationManager.send_notification(
                         "Agente Offline",
-                        "Conexão com o servidor perdida.",
+                        "Servidor não está acessível.",
                         priority="high",
                         icon_type="warning"
                     )
-                    print("🔴 Status: OFFLINE")
-
                 elif status == "reconnected":
                     NotificationManager.send_notification(
                         "Agente Online",
-                        "Conexão com o servidor restaurada.",
+                        "Conexão restaurada.",
                         priority="normal",
                         icon_type="success"
                     )
-                    print("🟢 Status: ONLINE")
 
                 self.last_status = status
 
             time.sleep(OFFLINE_CHECK_INTERVAL)
 
     def data_sender_loop(self):
-        """Loop de envio de dados"""
+        """Loop de envio de dados usando PowerShell para coleta"""
         while self.running:
-            if self.network.is_online:
-                try:
-                    data = SystemCollector.get_system_info()
-                    if SystemCollector.send_data(self.config, data):
-                        print(f"📤 Dados enviados: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                except Exception as e:
-                    print(f"⚠️  Erro no envio de dados: {e}")
+            is_online = self.network.check_connectivity()
 
-            time.sleep(self.config.get('check_interval'))
+            if is_online:
+                try:
+                    # USA POWERSHELL PARA COLETAR
+                    data = PowerShellCollector.get_system_info()
+
+                    # USA PYTHON PARA ENVIAR
+                    PowerShellCollector.send_data(self.config, data)
+
+                except Exception as e:
+                    logger.error(f"Erro no ciclo de envio: {e}")
+            else:
+                logger.debug("Servidor offline, aguardando reconexão")
+
+            time.sleep(HEARTBEAT_INTERVAL)
 
     def update_checker_loop(self):
         """Loop de verificação de atualizações"""
@@ -643,20 +632,16 @@ class InventoryAgent:
                 try:
                     update_info = self.updater.check_for_updates()
                     if update_info:
-                        print(f"🔄 Atualização disponível: {update_info.get('version')}")
-
                         if self.config.get('notifications'):
                             NotificationManager.send_notification(
                                 "Atualização Disponível",
-                                f"Nova versão {update_info.get('version')} disponível. Atualizando...",
+                                f"Nova versão {update_info.get('version')}",
                                 priority="normal",
                                 icon_type="info"
                             )
-
                         self.updater.download_update(update_info)
-
                 except Exception as e:
-                    print(f"⚠️  Erro na verificação de atualizações: {e}")
+                    logger.error(f"Erro ao verificar atualizações: {e}")
 
             time.sleep(UPDATE_CHECK_INTERVAL)
 
@@ -664,22 +649,27 @@ class InventoryAgent:
 def main():
     """Função principal"""
 
-    # Verifica se token foi passado como argumento (primeira execução)
     token = None
-    if len(sys.argv) > 1 and sys.argv[1].startswith('--token='):
-        token = sys.argv[1].split('=')[1]
+    if len(sys.argv) > 1:
+        for arg in sys.argv[1:]:
+            if arg.startswith('--token='):
+                token = arg.split('=', 1)[1]
+                break
 
     try:
         agent = InventoryAgent(token=token)
         agent.start()
+
     except ValueError as e:
-        print(f"❌ Erro: {e}")
+        logger.error(f"Erro de configuração: {e}")
         sys.exit(1)
+
     except KeyboardInterrupt:
-        print("\n⏹️  Agente interrompido")
+        logger.info("Agente interrompido")
         sys.exit(0)
+
     except Exception as e:
-        print(f"❌ Erro fatal: {e}")
+        logger.error(f"Erro fatal: {e}", exc_info=True)
         sys.exit(1)
 
 

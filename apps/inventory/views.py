@@ -1,7 +1,8 @@
 import os
 import re
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
+import datetime
 import logging
 import hashlib
 from django.views import View
@@ -28,15 +29,29 @@ from .models import Machine, BlockedSite, Notification, MachineGroup, AgentToken
 logger = logging.getLogger(__name__)
 
 
-def parse_wmi_date(wmi_str):
-    """Converte '/Date(1755216000000)/' para datetime UTC."""
-    m = re.search(r'/Date\((\d+)\)/', wmi_str or '')
-    if not m:
+def parse_wmi_date(wmi_date_str):
+    """
+    Converte formato de data WMI/JSON do PowerShell/Python
+    Formato recebido: "/Date(1234567890000)/" (timestamp em milissegundos)
+    """
+    if not wmi_date_str:
         return None
-    ms = int(m.group(1))
-    return datetime.datetime.utcfromtimestamp(ms / 1000).replace(
-        tzinfo=datetime.timezone.utc
-    )
+
+    try:
+        # Remove /Date( e )/
+        if isinstance(wmi_date_str, str) and wmi_date_str.startswith('/Date('):
+            ms = int(wmi_date_str.replace('/Date(', '').replace(')/', ''))
+            # Converte de milissegundos para datetime
+            return datetime.datetime.utcfromtimestamp(ms / 1000).replace(tzinfo=datetime.timezone.utc)
+
+        # Se já for datetime, retorna
+        if isinstance(wmi_date_str, datetime.datetime):
+            return wmi_date_str
+
+        return None
+    except (ValueError, AttributeError) as e:
+        logger.error(f"Erro ao parsear data WMI: {wmi_date_str} - {e}")
+        return None
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -68,6 +83,12 @@ class MachineCheckinView(View):
                     'loggedUser': hw.get('logged_user'),
 
                     'tpm': hw.get('tpm'),
+
+                    'manufacturer': hw.get('manufacturer'),
+                    'model': hw.get('model'),
+
+                    'serial_number': hw.get('serial_number'),
+                    'bios_version': hw.get('bios_version'),
 
                     'mac_address': hw.get('mac_address'),
                     'total_memory_slots': hw.get('total_memory_slots'),
