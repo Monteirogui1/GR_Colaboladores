@@ -22,7 +22,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
-
+from django.db.models import Q
 from .forms import MachineForm, NotificationForm, BlockedSiteForm, MachineGroupForm
 from .models import Machine, BlockedSite, Notification, MachineGroup, AgentToken, AgentVersion
 
@@ -169,31 +169,197 @@ class RunCommandView(LoginRequiredMixin, View):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class MachineNotificationView(View):
-    """
-    Endpoint que o agente consulta para puxar notificações pendentes.
-    Ex.: GET /api/notifications/?host=MACHINE_NAME
-    """
-    def get(self, request):
-        host = request.GET.get('host')
-        if not host:
-            return JsonResponse({'error': 'host parameter required'}, status=400)
+        """
+        API REST para o agente Python buscar e gerenciar notificações
 
-        try:
-            machine = Machine.objects.get(hostname=host)
-        except Machine.DoesNotExist:
-            return JsonResponse([], safe=False)
+        Esta view NÃO interfere com as CBVs existentes que usam templates.
+        É uma API separada exclusiva para comunicação com o agente.
 
-        qs = (
-            Notification.objects.filter(sent_to_all=True)
-            | Notification.objects.filter(machines=machine)
-            | Notification.objects.filter(groups=machine.group)
-        )
-        qs = qs.distinct().order_by('-created_at')
+        Endpoints:
+            GET  /api/notifications/ - Buscar notificações pendentes
+            POST /api/notifications/ - Marcar notificação como lida
+        """
 
-        payload = [
-            {'title': n.title, 'message': n.message} for n in qs
-        ]
-        return JsonResponse(payload, safe=False)
+        def get(self, request):
+            """
+            Busca notificações pendentes para uma máquina específica
+
+            Query Parameters:
+                - machine_name: Nome da máquina (hostname) - OBRIGATÓRIO
+                - status: 'pending', 'read', 'all' - padrão: 'pending'
+                - limit: Número máximo de resultados - padrão: 20
+
+            Exemplo:
+                GET /api/notifications/?machine_name=DESKTOP-ABC&status=pending
+
+            Response:
+                {
+                    "success": true,
+                    "machine_name": "DESKTOP-ABC",
+                    "total": 2,
+                    "notifications": [
+                        {
+                            "id": 1,
+                            "title": "Atualização",
+                            "message": "Reinicie o PC",
+                            "type": "warning",
+                            "priority": "high",
+                            "is_read": false,
+                            "created_at": "2025-02-04T10:00:00Z"
+                        }
+                    ]
+                }
+            """
+            try:
+                # Parâmetros
+                machine_name = request.GET.get('machine_name')
+                status = request.GET.get('status', 'pending')
+                limit = int(request.GET.get('limit', 20))
+
+                # Validação
+                if not machine_name:
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Parâmetro machine_name é obrigatório',
+                        'notifications': []
+                    }, status=400)
+
+                # Buscar máquina (por hostname, IP ou MAC)
+                try:
+                    machine = Machine.objects.get(
+                        Q(hostname__iexact=machine_name))
+
+                except Machine.DoesNotExist:
+                    # Retorna 200 com lista vazia para não quebrar o agente
+                    return JsonResponse({
+                        'success': False,
+                        'error': f'Máquina {machine_name} não encontrada',
+                        'machine_name': machine_name,
+                        'notifications': []
+                    }, status=200)
+
+                # Buscar notificações da máquina
+                notifications_query = Notification.objects.filter(machine=machine)
+
+                # Filtrar por status
+                if status == 'pending':
+                    notifications_query = notifications_query.filter(is_read=False)
+                elif status == 'read':
+                    notifications_query = notifications_query.filter(is_read=True)
+                # Se status == 'all', não filtra
+
+                # Ordenar: não lidas primeiro, depois mais recentes
+                notifications = notifications_query.order_by(
+                    'is_read',
+                    '-created_at'
+                )[:limit]
+
+                # Serializar para JSON
+                notifications_data = []
+                for notif in notifications:
+                    notifications_data.append({
+                        'id': notif.id,
+                        'title': notif.title,
+                        'message': notif.message,
+                        # Usar getattr para compatibilidade caso algum campo não exista
+                        'type': getattr(notif, 'type', 'info'),
+                        'priority': getattr(notif, 'priority', 'normal'),
+                        'status': getattr(notif, 'status', 'pending'),
+                        'is_read': notif.is_read,
+                        'created_at': notif.created_at.isoformat(),
+                    })
+
+                return JsonResponse({
+                    'success': True,
+                    'machine_name': machine.hostname,
+                    'machine_id': machine.id,
+                    'total': len(notifications_data),
+                    'notifications': notifications_data
+                })
+
+            except ValueError as e:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Parâmetro inválido: {str(e)}',
+                    'notifications': []
+                }, status=400)
+
+            except Exception as e:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Erro interno: {str(e)}',
+                    'notifications': []
+                }, status=500)
+
+        def post(self, request):
+            """
+            Marca uma notificação como lida
+
+            Body JSON:
+                {
+                    "notification_id": 123
+                }
+
+            Response:
+                {
+                    "success": true,
+                    "notification_id": 123,
+                    "is_read": true,
+                    "message": "Notificação marcada como lida"
+                }
+            """
+            try:
+                import json
+
+                # Parse do body
+                try:
+                    data = json.loads(request.body)
+                except json.JSONDecodeError:
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'JSON inválido no body'
+                    }, status=400)
+
+                notification_id = data.get('notification_id')
+
+                if not notification_id:
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Campo notification_id é obrigatório'
+                    }, status=400)
+
+                # Buscar notificação
+                try:
+                    notification = Notification.objects.get(id=notification_id)
+                except Notification.DoesNotExist:
+                    return JsonResponse({
+                        'success': False,
+                        'error': f'Notificação {notification_id} não encontrada'
+                    }, status=404)
+
+                # Marcar como lida
+                notification.is_read = True
+
+                # Atualizar campos extras se existirem
+                if hasattr(notification, 'status'):
+                    notification.status = 'read'
+                if hasattr(notification, 'read_at'):
+                    notification.read_at = datetime.now()
+
+                notification.save()
+
+                return JsonResponse({
+                    'success': True,
+                    'notification_id': notification.id,
+                    'is_read': notification.is_read,
+                    'message': 'Notificação marcada como lida'
+                })
+
+            except Exception as e:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Erro ao processar: {str(e)}'
+                }, status=500)
 
 
 class AgentDownloadView(View):
@@ -381,12 +547,12 @@ class NotificationCreateView(LoginRequiredMixin, CreateView):
     model = Notification
     form_class = NotificationForm
     template_name = 'inventario/notification_form.html'
-    success_url = reverse_lazy('inventario:notification_list')
+    success_url = reverse_lazy('inventario:notifications_list')
 
 
 class NotificationDeleteView(LoginRequiredMixin, DeleteView):
     model = Notification
-    success_url = reverse_lazy('inventario:notification_list')
+    success_url = reverse_lazy('inventario:notifications_list')
 
     def delete(self, request, *args, **kwargs):
         self.object = self.get_object()

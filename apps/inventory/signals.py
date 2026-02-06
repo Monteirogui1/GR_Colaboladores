@@ -8,20 +8,11 @@ logger = logging.getLogger(__name__)
 
 @receiver(post_save, sender=Notification)
 def notification_created(sender, instance, created, **kwargs):
-    if not created:
-        return
-
-    # 1. Determina o queryset de máquinas-alvo
-    if instance.sent_to_all:
-        qs = Machine.objects.all()
+    """Signal executado após criar/atualizar uma notificação"""
+    if created:
+        # Notificação foi criada
+        print(f"Nova notificação criada: {instance.title}")
     else:
-        qs = instance.machines.all()
-        if instance.groups.exists():
-            qs = qs.union(Machine.objects.filter(group__in=instance.groups.all()))
-
-    # 2. Envia para cada máquina
-    for machine in qs.distinct():
-        try:
-            send_notification_logic(machine.id, instance.title, instance.message)
-        except Exception as e:
-            logger.error(f"[Notification] erro enviando para {machine.hostname}: {e}")
+        # Notificação foi atualizada
+        if instance.is_read:
+            print(f"Notificação marcada como lida: {instance.title}")

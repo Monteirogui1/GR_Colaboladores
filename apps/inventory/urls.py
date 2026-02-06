@@ -65,10 +65,10 @@ urlpatterns = [
     path('blocked-sites/<int:pk>/delete/', BlockedSiteDeleteView.as_view(), name='blockedsite_delete'),
 
     # ==================== NOTIFICATIONS ====================
-    path('notifications/', NotificationListView.as_view(), name='notification_list'),
-    path('notifications/<int:pk>/', NotificationDetailView.as_view(), name='notification_detail'),
-    path('notifications/new/', NotificationCreateView.as_view(), name='notification_create'),
-    path('notifications/<int:pk>/delete/', NotificationDeleteView.as_view(), name='notification_delete'),
+    path('inventario/notifications/', NotificationListView.as_view(), name='notifications_list'),
+    path('inventario/notifications/<int:pk>/', NotificationDetailView.as_view(), name='notifications_detail'),
+    path('inventario/notifications/new/', NotificationCreateView.as_view(), name='notifications_create'),
+    path('inventario/notifications/<int:pk>/delete/', NotificationDeleteView.as_view(), name='notifications_delete'),
 
     # ============================================================================
     # GERENCIAMENTO DE TOKENS (Requer Login)

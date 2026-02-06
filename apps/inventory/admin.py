@@ -20,17 +20,3 @@ class BlockedSiteAdmin(ImportExportMixin, admin.ModelAdmin):
     list_filter   = ('group', 'machine')
     search_fields = ('url',)
 
-@admin.register(Notification)
-class NotificationAdmin(ImportExportMixin, admin.ModelAdmin):
-    list_display       = ('title', 'created_at', 'sent_to_all')
-    list_filter        = ('sent_to_all', 'created_at')
-    filter_horizontal  = ('machines', 'groups')
-
-    def save_model(self, request, obj, form, change):
-        # só salva no banco, sem tentar enviar nada por WinRM
-        super().save_model(request, obj, form, change)
-        self.message_user(
-            request,
-            "Notificação salva. O agente irá buscá-la e exibi-la localmente.",
-            level=messages.INFO
-        )

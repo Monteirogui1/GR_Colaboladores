@@ -83,19 +83,206 @@ class BlockedSite(models.Model):
 
 
 class Notification(models.Model):
-    title = models.CharField("Título", max_length=200)
-    message = models.TextField("Mensagem")
-    created_at = models.DateTimeField("Criado em", auto_now_add=True)
-    sent_to_all = models.BooleanField("Enviar para todos", default=True)
-    machines = models.ManyToManyField(Machine, blank=True, verbose_name="Máquinas Específicas")
-    groups = models.ManyToManyField(MachineGroup, blank=True, verbose_name="Grupos")
+    """
+    Notificação para ser exibida no agente da máquina cliente
 
-    def __str__(self):
-        return self.title
+    Campos:
+        - machine: Máquina que receberá a notificação
+        - title: Título da notificação
+        - message: Mensagem/conteúdo da notificação
+        - type: Tipo de notificação (info, success, warning, error, alert, critical)
+        - priority: Prioridade (low, normal, high, critical)
+        - status: Status da notificação (pending, read, expired)
+        - is_read: Flag booleana se foi lida
+        - created_at: Data de criação
+        - updated_at: Data de última atualização
+        - read_at: Data em que foi lida
+        - expires_at: Data de expiração (opcional)
+    """
+
+    # Choices para tipo de notificação
+    TYPE_CHOICES = [
+        ('info', 'Informação'),
+        ('success', 'Sucesso'),
+        ('warning', 'Aviso'),
+        ('error', 'Erro'),
+        ('alert', 'Alerta'),
+        ('critical', 'Crítico'),
+    ]
+
+    # Choices para prioridade
+    PRIORITY_CHOICES = [
+        ('low', 'Baixa'),
+        ('normal', 'Normal'),
+        ('high', 'Alta'),
+        ('critical', 'Crítica'),
+    ]
+
+    # Choices para status
+    STATUS_CHOICES = [
+        ('pending', 'Pendente'),
+        ('read', 'Lida'),
+        ('expired', 'Expirada'),
+    ]
+
+    # Relacionamento com a máquina
+    machine = models.ForeignKey(
+        'Machine',
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        verbose_name='Máquina',
+        help_text='Máquina que receberá a notificação'
+    )
+
+    # Conteúdo da notificação
+    title = models.CharField(
+        max_length=200,
+        verbose_name='Título',
+        help_text='Título da notificação (máximo 200 caracteres)'
+    )
+
+    message = models.TextField(
+        verbose_name='Mensagem',
+        help_text='Conteúdo detalhado da notificação'
+    )
+
+    # Tipo e prioridade
+    type = models.CharField(
+        max_length=20,
+        choices=TYPE_CHOICES,
+        default='info',
+        verbose_name='Tipo',
+        help_text='Tipo de notificação (define ícone e cor)'
+    )
+
+    priority = models.CharField(
+        max_length=20,
+        choices=PRIORITY_CHOICES,
+        default='normal',
+        verbose_name='Prioridade',
+        help_text='Prioridade da notificação'
+    )
+
+    # Status e controle
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        verbose_name='Status',
+        help_text='Status atual da notificação'
+    )
+
+    is_read = models.BooleanField(
+        default=False,
+        verbose_name='Lida',
+        help_text='Indica se a notificação já foi lida pelo usuário'
+    )
+
+    # Timestamps
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Criada em',
+        help_text='Data e hora de criação da notificação'
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Atualizada em',
+        null=True,
+        blank=True,
+        help_text='Data e hora da última atualização'
+    )
+
+    read_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Lida em',
+        help_text='Data e hora em que foi lida pelo usuário'
+    )
+
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Expira em',
+        help_text='Data e hora de expiração (opcional)'
+    )
 
     class Meta:
-        verbose_name = "Notificação"
-        verbose_name_plural = "Notificações"
+        ordering = ['-created_at']
+        verbose_name = 'Notificação'
+        verbose_name_plural = 'Notificações'
+
+    def __str__(self):
+        return f'{self.machine.hostname} - {self.title}'
+
+    def mark_as_read(self):
+        """
+        Marca a notificação como lida
+
+        Atualiza:
+            - is_read = True
+            - status = 'read'
+            - read_at = agora
+        """
+        self.is_read = True
+        self.status = 'read'
+        self.read_at = timezone.now()
+        self.save(update_fields=['is_read', 'status', 'read_at'])
+
+    def is_expired(self):
+        """
+        Verifica se a notificação está expirada
+
+        Returns:
+            bool: True se expirada, False caso contrário
+        """
+        if self.expires_at:
+            return timezone.now() > self.expires_at
+        return False
+
+    def mark_as_expired(self):
+        """Marca a notificação como expirada"""
+        self.status = 'expired'
+        self.save(update_fields=['status'])
+
+    @property
+    def age_in_hours(self):
+        """
+        Retorna a idade da notificação em horas
+
+        Returns:
+            float: Número de horas desde a criação
+        """
+        delta = timezone.now() - self.created_at
+        return delta.total_seconds() / 3600
+
+    @property
+    def is_urgent(self):
+        """
+        Verifica se a notificação é urgente
+
+        Returns:
+            bool: True se prioridade é high ou critical
+        """
+        return self.priority in ['high', 'critical']
+
+    def save(self, *args, **kwargs):
+        """
+        Override do save para lógica adicional
+
+        - Se expirada, muda status automaticamente
+        - Se marcada como lida, atualiza read_at
+        """
+        # Verificar expiração
+        if self.expires_at and timezone.now() > self.expires_at:
+            self.status = 'expired'
+
+        # Se foi marcada como lida mas não tem read_at, adicionar
+        if self.is_read and not self.read_at:
+            self.read_at = timezone.now()
+            self.status = 'read'
+
+        super().save(*args, **kwargs)
 
 
 class AgentToken(models.Model):

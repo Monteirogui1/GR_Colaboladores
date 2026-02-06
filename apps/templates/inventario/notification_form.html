@@ -1,60 +1,212 @@
 {% extends 'layouts/base.html' %}
 
-{% block title %}Nova Notificação - TI Manager{% endblock %}
+{% block title %}{% if notification %}Editar Notificação{% else %}Nova Notificação{% endif %} - TI Manager{% endblock %}
 
 {% block conteudo %}
 <div class="content">
     <div class="page-header">
-        <h1>Nova Notificação</h1>
-        <a href="{% url 'inventario:notification_list' %}" class="btn btn-secondary">Voltar</a>
+        <h1>{% if notification %}Editar Notificação{% else %}Nova Notificação{% endif %}</h1>
+        <a href="{% url 'inventario:notifications_list' %}" class="btn btn-secondary">Voltar</a>
     </div>
 
     <form method="post">
         {% csrf_token %}
-        <div class="form-grid">
-            <div class="form-group full-width">
-                {{ form.title.label_tag }}
-                {{ form.title }}
-                {% if form.title.errors %}
-                    <div class="text-danger">{{ form.title.errors }}</div>
-                {% endif %}
-            </div>
-            <div class="form-group full-width">
-                {{ form.message.label_tag }}
-                {{ form.message }}
-                {% if form.message.errors %}
-                    <div class="text-danger">{{ form.message.errors }}</div>
-                {% endif %}
-            </div>
-            <div class="form-group">
-                <div class="form-check">
-                    {{ form.sent_to_all }}
-                    {{ form.sent_to_all.label_tag }}
+        
+        <!-- Destinatário -->
+        <div class="detail-card" style="margin-bottom: 20px;">
+            <h2><i class="bi bi-pc-display"></i> Destinatário</h2>
+            <div class="form-grid">
+                <div class="form-group full-width">
+                    {{ form.machine.label_tag }}
+                    {{ form.machine }}
+                    {% if form.machine.errors %}
+                        <div class="text-danger">{{ form.machine.errors }}</div>
+                    {% endif %}
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        Selecione a máquina que receberá a notificação
+                    </small>
                 </div>
-                {% if form.sent_to_all.errors %}
-                    <div class="text-danger">{{ form.sent_to_all.errors }}</div>
-                {% endif %}
-            </div>
-            <div class="form-group">
-                {{ form.machines.label_tag }}
-                {{ form.machines }}
-                <small class="form-text">Segure Ctrl para selecionar múltiplas</small>
-                {% if form.machines.errors %}
-                    <div class="text-danger">{{ form.machines.errors }}</div>
-                {% endif %}
-            </div>
-            <div class="form-group">
-                {{ form.groups.label_tag }}
-                {{ form.groups }}
-                <small class="form-text">Segure Ctrl para selecionar múltiplos</small>
-                {% if form.groups.errors %}
-                    <div class="text-danger">{{ form.groups.errors }}</div>
-                {% endif %}
             </div>
         </div>
+
+        <!-- Conteúdo -->
+        <div class="detail-card" style="margin-bottom: 20px;">
+            <h2><i class="bi bi-chat-quote"></i> Conteúdo</h2>
+            <div class="form-grid">
+                <div class="form-group full-width">
+                    {{ form.title.label_tag }}
+                    {{ form.title }}
+                    {% if form.title.errors %}
+                        <div class="text-danger">{{ form.title.errors }}</div>
+                    {% endif %}
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        Título curto e descritivo (máximo 200 caracteres)
+                    </small>
+                </div>
+                <div class="form-group full-width">
+                    {{ form.message.label_tag }}
+                    {{ form.message }}
+                    {% if form.message.errors %}
+                        <div class="text-danger">{{ form.message.errors }}</div>
+                    {% endif %}
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        Mensagem detalhada que será exibida ao usuário
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configurações -->
+        <div class="detail-card" style="margin-bottom: 20px;">
+            <h2><i class="bi bi-gear"></i> Configurações</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    {{ form.type.label_tag }}
+                    {{ form.type }}
+                    {% if form.type.errors %}
+                        <div class="text-danger">{{ form.type.errors }}</div>
+                    {% endif %}
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        Define o ícone e cor da notificação
+                    </small>
+                </div>
+                <div class="form-group">
+                    {{ form.priority.label_tag }}
+                    {{ form.priority }}
+                    {% if form.priority.errors %}
+                        <div class="text-danger">{{ form.priority.errors }}</div>
+                    {% endif %}
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        Nível de urgência da notificação
+                    </small>
+                </div>
+                <div class="form-group full-width">
+                    {{ form.expires_at.label_tag }}
+                    {{ form.expires_at }}
+                    {% if form.expires_at.errors %}
+                        <div class="text-danger">{{ form.expires_at.errors }}</div>
+                    {% endif %}
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        A notificação será marcada como expirada após esta data (opcional)
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Preview -->
+        <div class="detail-card" style="margin-bottom: 20px;">
+            <h2><i class="bi bi-eye"></i> Preview</h2>
+            <div id="previewCard" style="
+                border-left: 4px solid #2196F3; 
+                padding: 20px; 
+                background: #f5f5f5; 
+                border-radius: 8px;
+                transition: all 0.3s ease;
+            ">
+                <div style="display: flex; align-items: start; gap: 15px;">
+                    <div style="
+                        width: 50px; 
+                        height: 50px; 
+                        border-radius: 50%; 
+                        display: flex; 
+                        align-items: center; 
+                        justify-content: center;
+                        background: rgba(33, 150, 243, 0.1);
+                    ">
+                        <i id="previewIcon" class="bi bi-info-circle" style="font-size: 24px; color: #2196F3;"></i>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="display: flex; gap: 10px; margin-bottom: 8px;">
+                            <strong id="previewTitle" style="font-size: 16px;">Título da Notificação</strong>
+                            <span id="previewPriority" style="
+                                background: #2196F3; 
+                                color: white; 
+                                padding: 2px 8px; 
+                                border-radius: 12px; 
+                                font-size: 12px; 
+                                font-weight: 500;
+                            ">Normal</span>
+                        </div>
+                        <p id="previewMessage" style="color: #666; margin: 0 0 10px 0;">
+                            Mensagem da notificação aparecerá aqui...
+                        </p>
+                        <div style="font-size: 14px; color: #999;">
+                            <i class="bi bi-pc-display"></i> <span id="previewMachine">Selecione uma máquina</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Botões -->
         <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Enviar</button>
+            <button type="submit" class="btn btn-primary">
+                {% if notification %}Salvar Alterações{% else %}Criar Notificação{% endif %}
+            </button>
         </div>
     </form>
 </div>
+
+<script>
+// Configuração de tipos
+const typeConfig = {
+    'info': { icon: 'bi-info-circle', color: '#2196F3' },
+    'success': { icon: 'bi-check-circle', color: '#4CAF50' },
+    'warning': { icon: 'bi-exclamation-triangle', color: '#FF9800' },
+    'error': { icon: 'bi-x-circle', color: '#F44336' },
+    'alert': { icon: 'bi-bell', color: '#FF5722' },
+    'critical': { icon: 'bi-exclamation-octagon', color: '#D32F2F' }
+};
+
+const priorityConfig = {
+    'low': { label: 'Baixa', color: '#9E9E9E' },
+    'normal': { label: 'Normal', color: '#2196F3' },
+    'high': { label: 'Alta', color: '#FF9800' },
+    'critical': { label: 'Crítica', color: '#F44336' }
+};
+
+function updatePreview() {
+    const title = document.getElementById('{{ form.title.id_for_label }}').value || 'Título da Notificação';
+    const message = document.getElementById('{{ form.message.id_for_label }}').value || 'Mensagem da notificação aparecerá aqui...';
+    const type = document.getElementById('{{ form.type.id_for_label }}').value || 'info';
+    const priority = document.getElementById('{{ form.priority.id_for_label }}').value || 'normal';
+    const machineSelect = document.getElementById('{{ form.machine.id_for_label }}');
+    const machine = machineSelect.options[machineSelect.selectedIndex]?.text || 'Selecione uma máquina';
+    
+    // Atualizar conteúdo
+    document.getElementById('previewTitle').textContent = title;
+    document.getElementById('previewMessage').textContent = message;
+    document.getElementById('previewMachine').textContent = machine;
+    
+    // Atualizar prioridade
+    const priorityBadge = document.getElementById('previewPriority');
+    priorityBadge.textContent = priorityConfig[priority].label;
+    priorityBadge.style.background = priorityConfig[priority].color;
+    
+    // Atualizar tipo
+    const previewCard = document.getElementById('previewCard');
+    const previewIcon = document.getElementById('previewIcon');
+    const config = typeConfig[type];
+    
+    previewCard.style.borderLeftColor = config.color;
+    previewIcon.style.color = config.color;
+    previewIcon.parentElement.style.background = config.color + '1A';
+    
+    // Atualizar ícone
+    previewIcon.className = 'bi ' + config.icon;
+}
+
+// Event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    ['{{ form.title.id_for_label }}', '{{ form.message.id_for_label }}'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', updatePreview);
+    });
+    
+    ['{{ form.type.id_for_label }}', '{{ form.priority.id_for_label }}', '{{ form.machine.id_for_label }}'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', updatePreview);
+    });
+    
+    updatePreview();
+});
+</script>
 {% endblock %}

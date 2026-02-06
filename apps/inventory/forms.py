@@ -68,16 +68,90 @@ class BlockedSiteForm(forms.ModelForm):
 
 
 class NotificationForm(forms.ModelForm):
+    '''Form para criar/editar notificações'''
+
     class Meta:
         model = Notification
-        fields = ['title', 'message', 'sent_to_all', 'machines', 'groups']
+        fields = [
+            'machine',
+            'title',
+            'message',
+            'type',
+            'priority',
+            'expires_at',
+        ]
         widgets = {
-            'title': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Título da notificação'}),
-            'message': forms.Textarea(attrs={'class': 'form-control', 'placeholder': 'Mensagem', 'rows': 4}),
-            'sent_to_all': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-            'machines': forms.SelectMultiple(attrs={'class': 'form-control', 'size': 5}),
-            'groups': forms.SelectMultiple(attrs={'class': 'form-control', 'size': 5}),
+            'title': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Digite o título da notificação'
+            }),
+            'message': forms.Textarea(attrs={
+                'class': 'form-control',
+                'rows': 4,
+                'placeholder': 'Digite a mensagem completa'
+            }),
+            'type': forms.Select(attrs={
+                'class': 'form-control'
+            }),
+            'priority': forms.Select(attrs={
+                'class': 'form-control'
+            }),
+            'machine': forms.Select(attrs={
+                'class': 'form-control'
+            }),
+            'expires_at': forms.DateTimeInput(attrs={
+                'class': 'form-control',
+                'type': 'datetime-local'
+            }),
         }
+
+
+class BulkNotificationForm(forms.Form):
+    '''Form para criar notificações em massa'''
+
+    machines = forms.ModelMultipleChoiceField(
+        queryset=Machine.objects.all(),
+        widget=forms.CheckboxSelectMultiple,
+        label='Máquinas',
+        help_text='Selecione as máquinas que receberão a notificação'
+    )
+
+    title = forms.CharField(
+        max_length=200,
+        widget=forms.TextInput(attrs={
+            'class': 'form-control',
+            'placeholder': 'Título da notificação'
+        })
+    )
+
+    message = forms.CharField(
+        widget=forms.Textarea(attrs={
+            'class': 'form-control',
+            'rows': 4,
+            'placeholder': 'Mensagem completa'
+        })
+    )
+
+    type = forms.ChoiceField(
+        choices=Notification.TYPE_CHOICES,
+        widget=forms.Select(attrs={'class': 'form-control'}),
+        initial='info'
+    )
+
+    priority = forms.ChoiceField(
+        choices=Notification.PRIORITY_CHOICES,
+        widget=forms.Select(attrs={'class': 'form-control'}),
+        initial='normal'
+    )
+
+    expires_at = forms.DateTimeField(
+        required=False,
+        widget=forms.DateTimeInput(attrs={
+            'class': 'form-control',
+            'type': 'datetime-local'
+        }),
+        label='Expira em (opcional)'
+    )
 
 
 class AgentTokenGenerateForm(forms.Form):

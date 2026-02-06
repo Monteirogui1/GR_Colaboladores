@@ -10,14 +10,15 @@ import hashlib
 import logging
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-
+from typing import Dict, List, Optional
+from pathlib import Path
 import psutil
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # Configurações do Agente
-VERSION = "2.0.3"
+VERSION = "2.0.4"
 UPDATE_CHECK_INTERVAL = 3600
 HEARTBEAT_INTERVAL = 60
 OFFLINE_CHECK_INTERVAL = 60
@@ -65,6 +66,7 @@ class AgentConfig:
             "endpoint_checkin": "/api/inventario/checkin/",
             "endpoint_update": "/api/inventario/agent/update/",
             "endpoint_health": "/api/inventario/health/",
+            "endpoint_notifications": "/api/notifications/",
         }
 
     def get(self, key, default=None):
@@ -138,40 +140,6 @@ class TokenValidator:
         except Exception as e:
             logger.error(f"Erro ao validar token: {e}")
             return False
-
-
-class NotificationManager:
-    """Gerenciador de notificações do sistema"""
-
-    @staticmethod
-    def notify_windows_native(title, message):
-        if platform.system() != "Windows":
-            return False
-
-        try:
-            from winotify import Notification
-
-            toast = Notification(
-                app_id="Agente de Inventário",
-                title=title,
-                msg=message,
-                duration="short"
-            )
-            toast.show()
-            return True
-
-        except ImportError:
-            return False
-        except Exception as e:
-            logger.error(f"Erro ao enviar notificação: {e}")
-            return False
-
-    @staticmethod
-    def send_notification(title, message, priority="normal", icon_type="info"):
-        if platform.system() != "Windows":
-            return False
-
-        return NotificationManager.notify_windows_native(title, message)
 
 
 class NetworkMonitor:
@@ -255,14 +223,6 @@ class AutoUpdater:
                     f.write(response.content)
 
                 logger.info("Atualização aplicada com sucesso")
-
-                if self.config.get('notifications'):
-                    NotificationManager.send_notification(
-                        "Atualização Aplicada",
-                        f"Agente atualizado para v{update_info.get('version')}",
-                        priority="normal",
-                        icon_type="success"
-                    )
 
                 time.sleep(2)
                 os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -417,7 +377,7 @@ class PowerShellCollector:
             antivirus_name         = $av.displayName
             av_state               = if ($av.productState) { $av.productState.ToString() } else { $null }
 
-            tpm                    = $tpmInfo # Compatibilidade
+            tpm                    = $tpmInfo
         }
 
         return $result | ConvertTo-Json -Depth 10 -Compress
@@ -515,6 +475,319 @@ class PowerShellCollector:
             return False
 
 
+class NotificationManager:
+    """
+    Gerenciador de notificações usando sistema nativo do Windows
+
+    Features:
+    - Toast notifications via PowerShell
+    - Busca notificações do servidor
+    - Marca como lida automaticamente
+    - Histórico local para evitar duplicatas
+    """
+
+    NOTIFICATION_CHECK_INTERVAL = 120  # segundos (2 minutos)
+    NOTIFICATION_DISPLAY_DELAY = 2  # segundos entre notificações
+
+    def __init__(self, config):
+        """
+        Inicializa o gerenciador de notificações
+
+        Args:
+            config (dict): Configuração do agente com server_url, machine_name, etc.
+        """
+        self.config = config
+        self.server_url = config.get('server_url', 'http://192.168.1.54:5001')
+        self.endpoint = config.get('endpoint_notifications', '/api/notifications/')
+        self.machine_name = config.get('machine_name', '')
+        self.notifications_enabled = config.get('notifications', True)
+
+        # Arquivo de histórico
+        self.history_file = Path("logs/notification_history.json")
+        self.history_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Carregar histórico
+        self.shown_notifications = self._load_history()
+
+        logger.info("NotificationManager inicializado (Windows Nativo)")
+
+    def _load_history(self):
+        """Carrega histórico de notificações exibidas"""
+        if self.history_file.exists():
+            try:
+                with open(self.history_file, 'r') as f:
+                    data = json.load(f)
+                    return set(data.get('shown_notifications', []))
+            except Exception as e:
+                logger.warning(f"Erro ao carregar histórico: {e}")
+        return set()
+
+    def _save_history(self):
+        """Salva histórico de notificações exibidas"""
+        try:
+            with open(self.history_file, 'w') as f:
+                json.dump({
+                    'shown_notifications': list(self.shown_notifications),
+                    'last_updated': datetime.now().isoformat()
+                }, f, indent=2)
+        except Exception as e:
+            logger.error(f"Erro ao salvar histórico: {e}")
+
+    def send_notification(self, title, message, priority="normal", icon_type="info"):
+        """
+        Envia notificação local usando Windows nativo
+
+        Args:
+            title (str): Título da notificação
+            message (str): Mensagem da notificação
+            priority (str): Prioridade (low, normal, high, critical)
+            icon_type (str): Tipo do ícone (info, warning, error, success)
+        """
+        if not self.notifications_enabled:
+            logger.debug("Notificações desabilitadas")
+            return False
+
+        if platform.system() != 'Windows':
+            logger.warning("Sistema não é Windows")
+            return False
+
+        try:
+            # Mapear ícone para emoji/símbolo
+            icon_map = {
+                'info': 'ℹ️',
+                'warning': '⚠️',
+                'error': '❌',
+                'success': '✅',
+                'alert': '🔔',
+                'critical': '🚨'
+            }
+            icon = icon_map.get(icon_type, 'ℹ️')
+
+            # Título com ícone
+            full_title = f"{icon} {title}"
+
+            # Criar notificação via PowerShell
+            self._show_windows_toast(full_title, message)
+
+            logger.info(f"Notificação enviada: {title}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Erro ao enviar notificação: {e}")
+            return False
+
+    def _show_windows_toast(self, title, message):
+        """
+        Exibe notificação Toast nativa do Windows via PowerShell
+
+        Args:
+            title (str): Título da notificação
+            message (str): Mensagem da notificação
+        """
+        # Escapar aspas no PowerShell
+        title_escaped = title.replace('"', '`"').replace("'", "''")
+        message_escaped = message.replace('"', '`"').replace("'", "''")
+
+        # Script PowerShell para Toast Notification (Windows 10/11)
+        ps_script = f"""
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+
+$APP_ID = 'TI Manager'
+
+$template = @"
+<toast>
+    <visual>
+        <binding template="ToastGeneric">
+            <text>{title_escaped}</text>
+            <text>{message_escaped}</text>
+        </binding>
+    </visual>
+    <audio src="ms-winsoundevent:Notification.Default" />
+</toast>
+"@
+
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml($template)
+$toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($APP_ID).Show($toast)
+"""
+
+        try:
+            # Executar PowerShell
+            subprocess.run(
+                ['powershell', '-Command', ps_script],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW  # Não mostrar janela do PowerShell
+            )
+            logger.debug("Toast notification exibida via PowerShell")
+
+        except subprocess.TimeoutExpired:
+            logger.warning("Timeout ao executar PowerShell")
+            # Fallback para msg.exe (mais simples mas menos bonito)
+            self._show_msg_fallback(title, message)
+
+        except Exception as e:
+            logger.error(f"Erro no PowerShell Toast: {e}")
+            # Fallback para msg.exe
+            self._show_msg_fallback(title, message)
+
+    def _show_msg_fallback(self, title, message):
+        """
+        Fallback usando msg.exe (Windows XP+)
+
+        Args:
+            title (str): Título da notificação
+            message (str): Mensagem da notificação
+        """
+        try:
+            # msg.exe - comando nativo do Windows
+            # msg * exibe para todos os usuários da sessão
+            full_message = f"{title}\n\n{message}"
+
+            subprocess.run(
+                ['msg', '*', full_message],
+                capture_output=True,
+                timeout=3,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            logger.debug("Notificação exibida via msg.exe (fallback)")
+
+        except Exception as e:
+            logger.error(f"Erro no fallback msg.exe: {e}")
+
+    def fetch_pending_notifications(self):
+        """
+        Busca notificações pendentes do servidor via POST
+
+        Returns:
+            list: Lista de notificações ou lista vazia em caso de erro
+        """
+        if not self.notifications_enabled:
+            return []
+
+        try:
+            session = RequestsSession.get_session()
+
+            url = f"{self.server_url}{self.endpoint}?machine_name={self.machine_name}&status=pending&limit=20"
+
+            # Enviar via POST com JSON payload (CORRIGIDO)
+            payload = {
+                'machine_name': self.machine_name,
+                'status': 'pending',
+                'limit': 20
+            }
+
+            logger.debug(f"Buscando notificações em: {url}")
+            logger.debug(f"Payload: {payload}")
+
+            response = session.post(url, json=payload, verify=False, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get('success'):
+                    notifications = data.get('notifications', [])
+                    logger.info(f"Notificações encontradas: {len(notifications)}")
+                    return notifications
+                else:
+                    logger.warning(f"API retornou erro: {data.get('error')}")
+                    return []
+            else:
+                logger.warning(f"Erro HTTP {response.status_code}: {response.text}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Erro ao buscar notificações: {e}")
+            return []
+
+    def mark_as_read(self, notification_id):
+        """
+        Marca notificação como lida no servidor
+
+        Args:
+            notification_id (int): ID da notificação
+
+        Returns:
+            bool: True se sucesso, False caso contrário
+        """
+        try:
+            session = RequestsSession.get_session()
+
+            url = f"{self.server_url}/api/notifications/mark-read/"
+            data = {'notification_id': notification_id}
+
+            response = session.post(url, json=data, verify=False, timeout=10)
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('success'):
+                    logger.info(f"Notificação {notification_id} marcada como lida")
+                    return True
+
+            logger.warning(f"Falha ao marcar notificação {notification_id} como lida")
+            return False
+
+        except Exception as e:
+            logger.error(f"Erro ao marcar como lida: {e}")
+            return False
+
+    def process_pending_notifications(self):
+        """
+        Processa todas as notificações pendentes
+
+        Busca notificações do servidor, exibe as não vistas e marca como lidas.
+        """
+        if not self.notifications_enabled:
+            return
+
+        logger.info("Verificando notificações do servidor...")
+
+        # Buscar notificações
+        notifications = self.fetch_pending_notifications()
+
+        if not notifications:
+            logger.debug("Nenhuma notificação pendente")
+            return
+
+        # Processar cada notificação
+        for notif in notifications:
+            notif_id = notif.get('id')
+
+            # Verificar se já foi exibida
+            if notif_id in self.shown_notifications:
+                logger.debug(f"Notificação {notif_id} já foi exibida")
+                continue
+
+            # Exibir notificação
+            title = notif.get('title', 'Notificação')
+            message = notif.get('message', '')
+            notif_type = notif.get('type', 'info')
+            priority = notif.get('priority', 'normal')
+
+            logger.info(f"Exibindo notificação: {title}")
+
+            success = self.send_notification(
+                title=title,
+                message=message,
+                priority=priority,
+                icon_type=notif_type
+            )
+
+            if success:
+                # Marcar como exibida localmente
+                self.shown_notifications.add(notif_id)
+                self._save_history()
+
+                # Marcar como lida no servidor
+                self.mark_as_read(notif_id)
+
+                # Aguardar entre notificações
+                time.sleep(self.NOTIFICATION_DISPLAY_DELAY)
+
+
 class InventoryAgent:
     """Agente principal de inventário"""
 
@@ -537,6 +810,7 @@ class InventoryAgent:
 
         self.network = NetworkMonitor(self.config)
         self.updater = AutoUpdater(self.config)
+        self.notification_manager = NotificationManager(self.config)
         self.running = False
         self.last_status = None
 
@@ -548,16 +822,9 @@ class InventoryAgent:
         """Inicia o agente"""
         self.running = True
 
-        if self.config.get('notifications'):
-            NotificationManager.send_notification(
-                "Agente Iniciado",
-                "Agente de inventário está rodando.",
-                priority="normal",
-                icon_type="info"
-            )
-
         threading.Thread(target=self.network_monitor_loop, daemon=True).start()
         threading.Thread(target=self.data_sender_loop, daemon=True).start()
+        threading.Thread(target=self.notification_checker_loop, daemon=True).start()
 
         if self.config.get('auto_update'):
             threading.Thread(target=self.update_checker_loop, daemon=True).start()
@@ -585,23 +852,7 @@ class InventoryAgent:
                     status = "offline"
                     logger.warning("Servidor offline")
 
-            if status and self.config.get('notifications'):
-                if status == "offline":
-                    NotificationManager.send_notification(
-                        "Agente Offline",
-                        "Servidor não está acessível.",
-                        priority="high",
-                        icon_type="warning"
-                    )
-                elif status == "reconnected":
-                    NotificationManager.send_notification(
-                        "Agente Online",
-                        "Conexão restaurada.",
-                        priority="normal",
-                        icon_type="success"
-                    )
-
-                self.last_status = status
+            self.last_status = status
 
             time.sleep(OFFLINE_CHECK_INTERVAL)
 
@@ -632,18 +883,22 @@ class InventoryAgent:
                 try:
                     update_info = self.updater.check_for_updates()
                     if update_info:
-                        if self.config.get('notifications'):
-                            NotificationManager.send_notification(
-                                "Atualização Disponível",
-                                f"Nova versão {update_info.get('version')}",
-                                priority="normal",
-                                icon_type="info"
-                            )
                         self.updater.download_update(update_info)
                 except Exception as e:
                     logger.error(f"Erro ao verificar atualizações: {e}")
 
             time.sleep(UPDATE_CHECK_INTERVAL)
+
+    def notification_checker_loop(self):
+        """Loop de verificação de notificações"""
+        time.sleep(30)
+        while self.running:
+            if self.network.is_online:
+                try:
+                    self.notification_manager.process_pending_notifications()
+                except Exception as e:
+                    logger.error(f"Erro ao verificar notificações: {e}")
+            time.sleep(NotificationManager.NOTIFICATION_CHECK_INTERVAL)
 
 
 def main():
